@@ -91,11 +91,12 @@ async function fetchQuote(symbol, apiKey) {
   } catch { return null; }
 }
 
-async function fetchMarketNews() {
+async function fetchMarketNews(apiKey) {
+  if (!apiKey) return [];
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 800,
@@ -174,6 +175,8 @@ function App() {
   const [avKey, setAvKey]           = useState(()=>lsGet("sijoitus_avkey",DEFAULT_AV_KEY));
   const [avKeyInput, setAvKeyInput] = useState(()=>lsGet("sijoitus_avkey",DEFAULT_AV_KEY));
   const [nordnet, setNordnet]       = useState(()=>lsGet("sijoitus_nordnet",{level:3}));
+  const [antKey, setAntKey]         = useState(()=>lsGet("sijoitus_antkey",""));
+  const [antKeyInput, setAntKeyInput] = useState(()=>lsGet("sijoitus_antkey",""));
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
@@ -193,7 +196,7 @@ function App() {
     setStocks(MARKET_SYMBOLS.map((s,i)=>({...s,data:quotes[i]})));
     setLastUpd(new Date());
     setLM(false);
-    const n = await fetchMarketNews();
+    const n = await fetchMarketNews(antKey);
     setNews(n); setLN(false);
   }
 
@@ -205,7 +208,7 @@ function App() {
     setMessages(hist); setLoading(true);
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST", headers:{"Content-Type":"application/json"},
+        method:"POST", headers:{"Content-Type":"application/json","x-api-key":antKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:1000,
           system: buildSystemPrompt(stocks,portfolio,news,nordnet),
@@ -503,6 +506,24 @@ function App() {
       {/* ══ ASETUKSET TAB ══ */}
       {tab==="settings" && (
         <div style={{flex:1,overflowY:"auto",padding:"14px 16px"}}>
+          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🤖 Anthropic API-avain (Claude)</div>
+            <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
+              Tarvitaan AI-analyysiin: <a href="https://console.anthropic.com" target="_blank" style={{color:"#00d4aa"}}>console.anthropic.com</a>
+              <br/><span style={{color:"#7a9aaa"}}>API Keys → Create Key</span>
+            </p>
+            <div style={{display:"flex",gap:7}}>
+              <input value={antKeyInput} onChange={e=>setAntKeyInput(e.target.value)} placeholder="sk-ant-api..."
+                type="password"
+                style={{flex:1,background:"#050810",border:"1px solid #2a4050",borderRadius:7,padding:"7px 12px",color:"#e8f0f8",fontFamily:"inherit",fontSize:12}}/>
+              <button onClick={()=>{lsSet("sijoitus_antkey",antKeyInput);setAntKey(antKeyInput);}}
+                style={{background:"linear-gradient(135deg,#00d4aa,#0099bb)",border:"none",borderRadius:7,padding:"7px 14px",color:"#050810",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
+                Tallenna
+              </button>
+            </div>
+            {antKey && <div style={{marginTop:8,fontSize:11,color:"#00d4aa"}}>✓ Avain tallennettu</div>}
+          </div>
+
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🔑 Alpha Vantage API-avain</div>
             <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
