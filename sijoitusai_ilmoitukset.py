@@ -143,9 +143,3 @@ if __name__ == "__main__":
 
     tarkista_markkinat()
 
-    schedule.every(TARKISTUS_VK).hours.do(tarkista_markkinat)
-
-    print("\nSkripti pyorii taustalla. Pysayta Ctrl+C.")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
