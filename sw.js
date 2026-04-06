@@ -1,4 +1,4 @@
-const CACHE = "sijoitusai-v1";
+const CACHE = "sijoitusai-v3";
 const ASSETS = ["/index.html", "/manifest.json"];
 
 self.addEventListener("install", e => {
@@ -14,7 +14,6 @@ self.addEventListener("activate", e => {
 });
 
 self.addEventListener("fetch", e => {
-  // API-kutsut aina verkosta, ei cachesta
   if (e.request.url.includes("anthropic.com") || e.request.url.includes("alphavantage.co")) {
     return;
   }
