@@ -1,11 +1,9 @@
 """
 SijoitusAI - Automaattiset Telegram-ilmoitukset
-Kaynnistaaksesi: python sijoitusai_ilmoitukset.py
+Ajettava GitHub Actionsilla tunnin valein.
 """
 
 import requests
-import schedule
-import time
 from datetime import datetime
 
 # --- ASETUKSET ---
@@ -13,17 +11,24 @@ TELEGRAM_TOKEN   = "8627280901:AAFSIOdXl53aEKkGwl8fCj6IEuivy_gKIDA"
 TELEGRAM_CHAT_ID = "8780106046"
 ALPHA_VANTAGE_KEY = "L7RKV8GVN2HAGGKF"
 
-SEURATTAVAT = [
-    {"symbol": "AAPL", "name": "Apple"},
-    {"symbol": "MSFT", "name": "Microsoft"},
-    {"symbol": "NVDA", "name": "NVIDIA"},
-    {"symbol": "TSLA", "name": "Tesla"},
-    {"symbol": "SPY",  "name": "S&P 500 ETF"},
+# Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
+OMAT_OMISTUKSET = [
+    {"symbol": "LUG",   "name": "Lundin Gold",         "kpl": 27, "hinta_eur": 58.87},
+    {"symbol": "LYSX",  "name": "Amundi Euro Stoxx 50", "kpl": 1,  "hinta_eur": 58.05},
+    {"symbol": "MEKKO", "name": "Marimekko",            "kpl": 1,  "hinta_eur": 11.40},
+    {"symbol": "FIA1S", "name": "Finnair",              "kpl": 4,  "hinta_eur": 3.00},
 ]
 
-LASKU_RAJA   = -3.0
-NOUSU_RAJA   =  3.0
-TARKISTUS_VK = 1
+# Yleisesti seurattavat markkinat
+SEURATTAVAT = [
+    {"symbol": "SPY",  "name": "S&P 500 ETF"},
+    {"symbol": "GLD",  "name": "Kulta ETF"},
+    {"symbol": "AAPL", "name": "Apple"},
+    {"symbol": "NVDA", "name": "NVIDIA"},
+]
+
+LASKU_RAJA = -3.0
+NOUSU_RAJA =  3.0
 
 # --- TELEGRAM ---
 def laheta_viesti(teksti):
@@ -35,7 +40,7 @@ def laheta_viesti(teksti):
             "parse_mode": "HTML",
         })
         if r.ok:
-            print(f"OK Viesti lahetetty: {teksti[:60]}...")
+            print(f"OK: Viesti lahetetty")
         else:
             print(f"VIRHE: {r.text}")
     except Exception as e:
@@ -48,98 +53,138 @@ def hae_kurssi(symbol):
         r = requests.get(url, timeout=10)
         q = r.json().get("Global Quote", {})
         hinta = q.get("05. price")
-        muutos_str = q.get("10. change percent", "0%")
         if not hinta:
             return None
+        muutos_str = q.get("10. change percent", "0%")
         muutos = float(muutos_str.replace("%", "").strip())
         return {
-            "hinta":   float(hinta),
-            "muutos":  muutos,
-            "korkein": float(q.get("03. high", 0)),
-            "matalin": float(q.get("04. low", 0)),
+            "hinta":  float(hinta),
+            "muutos": muutos,
         }
     except Exception as e:
-        print(f"  Virhe haussa {symbol}: {e}")
+        print(f"Virhe haussa {symbol}: {e}")
         return None
 
-# --- UUTISHAKU ---
-def hae_uutiset():
+# --- CLAUDE ANALYYSI ---
+def hae_analyysi(salkku_teksti, markkinat_teksti):
     try:
         res = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={"Content-Type": "application/json"},
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 500,
+                "max_tokens": 800,
                 "tools": [{"type": "web_search_20250305", "name": "web_search"}],
                 "messages": [{
                     "role": "user",
-                    "content": f"Hae tanaan ({datetime.now().strftime('%d.%m.%Y')}) tarkeimmat talousuutiset. Listaa max 3 lyhyesti. Vastaa suomeksi."
+                    "content": (
+                        f"Hae tanaan ({datetime.now().strftime('%d.%m.%Y')}) tarkeimmat talousuutiset "
+                        f"ja analysoi niiden vaikutus sijoittajalle.\n\n"
+                        f"KAYTTAJAN SALKKU:\n{salkku_teksti}\n\n"
+                        f"MARKKINATILANNE:\n{markkinat_teksti}\n\n"
+                        f"Anna lyhyt analyysi (max 5 lausetta) suomeksi:\n"
+                        f"1. Mita taman paivan uutiset tarkoittavat salkun kannalta?\n"
+                        f"2. Onko jotain syyta ostaa, myyda tai pitaa silmalla?\n"
+                        f"3. Yksi konkreettinen vinkki tanaan.\n"
+                        f"Muistuta lopussa lyhyesti etta kyseessa on yleinen analyysi eika virallinen sijoitusneuvonta."
+                    )
                 }],
             },
-            timeout=30,
+            timeout=45,
         )
         data = res.json()
         return "".join(b.get("text", "") for b in data.get("content", []))
-    except:
+    except Exception as e:
+        print(f"Analyysivirhe: {e}")
         return ""
 
-# --- PAAANALYYSI ---
-def tarkista_markkinat():
+# --- PAAOHJELMA ---
+def main():
     nyt = datetime.now().strftime("%d.%m.%Y %H:%M")
-    print(f"\nTarkistetaan markkinat... {nyt}")
+    print(f"Tarkistetaan markkinat... {nyt}")
 
-    ilmoitukset = []
-    kaikki_kurssit = []
+    import time
 
-    for osake in SEURATTAVAT:
-        data = hae_kurssi(osake["symbol"])
-        if not data:
-            print(f"  {osake['symbol']}: ei dataa")
-            continue
+    # Hae omat omistukset
+    salkku_rivit = []
+    halytykset = []
+    sijoitettu_yhteensa = 0
+    arvo_yhteensa = 0
 
-        muutos = data["muutos"]
-        hinta  = data["hinta"]
-        print(f"  {osake['symbol']}: ${hinta:.2f} ({muutos:+.2f}%)")
+    print("\nOmat omistukset:")
+    for o in OMAT_OMISTUKSET:
+        data = hae_kurssi(o["symbol"])
+        sijoitettu = o["kpl"] * o["hinta_eur"]
+        sijoitettu_yhteensa += sijoitettu
 
-        kaikki_kurssit.append(f"<b>{osake['name']}</b> ${hinta:.2f} ({muutos:+.2f}%)")
+        if data:
+            nykyarvo = data["hinta"] * o["kpl"]
+            arvo_yhteensa += nykyarvo
+            tuotto_eur = nykyarvo - sijoitettu
+            tuotto_pct = (tuotto_eur / sijoitettu) * 100
+            muutos = data["muutos"]
 
-        if muutos <= LASKU_RAJA:
-            ilmoitukset.append(f"LASKU: <b>{osake['name']}</b> {muutos:.1f}% -> ${hinta:.2f}")
-        elif muutos >= NOUSU_RAJA:
-            ilmoitukset.append(f"NOUSU: <b>{osake['name']}</b> +{muutos:.1f}% -> ${hinta:.2f}")
+            print(f"  {o['symbol']}: {data['hinta']:.2f}EUR ({muutos:+.2f}%)")
+
+            salkku_rivit.append(
+                f"  {o['name']} ({o['symbol']}): {o['kpl']}kpl | "
+                f"Hankinta: {o['hinta_eur']:.2f}EUR | "
+                f"Nyt: {data['hinta']:.2f}EUR | "
+                f"Tuotto: {tuotto_eur:+.2f}EUR ({tuotto_pct:+.1f}%)"
+            )
+
+            if muutos <= LASKU_RAJA:
+                halytykset.append(f"LASKU: <b>{o['name']}</b> {muutos:.1f}% tanaan!")
+            elif muutos >= NOUSU_RAJA:
+                halytykset.append(f"NOUSU: <b>{o['name']}</b> +{muutos:.1f}% tanaan!")
+        else:
+            arvo_yhteensa += sijoitettu
+            salkku_rivit.append(f"  {o['name']} ({o['symbol']}): ei kurssidataa")
+            print(f"  {o['symbol']}: ei dataa")
 
         time.sleep(13)
 
-    if ilmoitukset:
-        viesti = f"<b>SijoitusAI HALYTYS</b> - {nyt}\n\n" + "\n".join(ilmoitukset)
-        laheta_viesti(viesti)
+    # Hae markkinatilanne
+    markkinat_rivit = []
+    print("\nMarkkinat:")
+    for s in SEURATTAVAT:
+        data = hae_kurssi(s["symbol"])
+        if data:
+            print(f"  {s['symbol']}: {data['hinta']:.2f} ({data['muutos']:+.2f}%)")
+            markkinat_rivit.append(f"  {s['name']}: {data['hinta']:.2f} ({data['muutos']:+.2f}%)")
+        else:
+            print(f"  {s['symbol']}: ei dataa")
+        time.sleep(13)
 
-    if datetime.now().hour == 9:
-        uutiset = hae_uutiset()
-        viesti = (
-            f"<b>SijoitusAI Aamuyhteenveto</b> - {nyt}\n\n"
-            "<b>Kurssit:</b>\n" + "\n".join(kaikki_kurssit)
-            + (f"\n\n<b>Uutiset:</b>\n{uutiset}" if uutiset else "")
-            + "\n\nEi virallista sijoitusneuvontaa"
-        )
-        laheta_viesti(viesti)
+    # Laske salkun kokonaistuotto
+    kokonaistuotto = arvo_yhteensa - sijoitettu_yhteensa
+    kokonaistuotto_pct = (kokonaistuotto / sijoitettu_yhteensa * 100) if sijoitettu_yhteensa > 0 else 0
 
-    print(f"  Valmis. Seuraava tarkistus {TARKISTUS_VK}h paasta.")
+    salkku_teksti = "\n".join(salkku_rivit)
+    markkinat_teksti = "\n".join(markkinat_rivit)
 
-# --- KAYNNISTYS ---
-if __name__ == "__main__":
-    print("=" * 50)
-    print("  SijoitusAI - Automaattiset ilmoitukset")
-    print("=" * 50)
+    # Hae Claude-analyysi
+    print("\nHaetaan analyysia...")
+    analyysi = hae_analyysi(salkku_teksti, markkinat_teksti)
 
-    laheta_viesti(
-        f"<b>SijoitusAI kaynnistetty!</b>\n"
-        f"Seuraan {len(SEURATTAVAT)} osaketta.\n"
-        f"Halytysrajat: lasku {LASKU_RAJA}% / nousu +{NOUSU_RAJA}%\n"
-        f"Tarkistusvaeli: {TARKISTUS_VK}h\n"
-        "Aamuyhteenveto klo 9:00."
+    # Rakenna Telegram-viesti
+    viesti = (
+        f"<b>SijoitusAI paivittainen raportti</b> - {nyt}\n\n"
+        f"<b>Oma salkku:</b>\n{salkku_teksti}\n\n"
+        f"<b>Salkku yhteensa:</b> Sijoitettu {sijoitettu_yhteensa:.2f}EUR | "
+        f"Arvo nyt {arvo_yhteensa:.2f}EUR | "
+        f"Tuotto {kokonaistuotto:+.2f}EUR ({kokonaistuotto_pct:+.1f}%)\n\n"
+        f"<b>Markkinat:</b>\n{markkinat_teksti}\n\n"
     )
 
-    tarkista_markkinat()
+    if halytykset:
+        viesti += f"<b>HALYTYKSET:</b>\n" + "\n".join(halytykset) + "\n\n"
 
+    if analyysi:
+        viesti += f"<b>AI-analyysi:</b>\n{analyysi}"
+
+    laheta_viesti(viesti)
+    print("\nValmis!")
+
+if __name__ == "__main__":
+    main()
