@@ -1,4 +1,4 @@
-const CACHE = "sijoitusai-v3";
+const CACHE = "sijoitusai-v4";
 const ASSETS = ["/index.html", "/manifest.json"];
 
 self.addEventListener("install", e => {
