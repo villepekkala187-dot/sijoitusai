@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="SijoitusAI"/>
+  <meta name="theme-color" content="#050810"/>
+  <title>SijoitusAI</title>
+  <link rel="manifest" href="manifest.json"/>
+
+  <!-- iOS kotinäyttö-ikoni (emoji fallback SVG) -->
+  <link rel="apple-touch-icon" href="icon.svg"/>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #050810; color: #e8f0f8; }
+    body { font-family: 'DM Mono', 'Courier New', monospace; overflow: hidden; }
+    #root { height: 100%; display: flex; flex-direction: column; }
+
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap');
+
+    @keyframes dot  { 0%,100%{opacity:.25;transform:scale(.7)} 50%{opacity:1;transform:scale(1)} }
+    @keyframes up   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes glow { 0%,100%{box-shadow:0 0 8px #00d4aa22} 50%{box-shadow:0 0 22px #00d4aa55} }
+
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: #050810; }
+    ::-webkit-scrollbar-thumb { background: #00d4aa33; border-radius: 2px; }
+
+    input, textarea { outline: none !important; }
+    button { cursor: pointer; }
+
+    .hov:hover  { opacity: .75 !important; }
+    .card:hover { border-color: #00d4aa44 !important; transform: translateY(-1px); }
+    .chip:hover { background: #00d4aa1a !important; border-color: #00d4aa66 !important; color: #00d4aa !important; }
+
+    /* Safe area for iPhone notch/home bar */
+    .safe-bottom { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+    .safe-top    { padding-top:    max(14px, env(safe-area-inset-top)); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+// ─── VAKIOT ────────────────────────────────────────────────────
+const DEFAULT_AV_KEY = "demo";
+const MARKET_SYMBOLS = [
+  { symbol: "AAPL", name: "Apple",       sector: "Teknologia" },
+  { symbol: "MSFT", name: "Microsoft",   sector: "Teknologia" },
+  { symbol: "NVDA", name: "NVIDIA",      sector: "Teknologia" },
+  { symbol: "TSLA", name: "Tesla",       sector: "Auto"       },
+  { symbol: "SPY",  name: "S&P 500 ETF", sector: "ETF"        },
+  { symbol: "GLD",  name: "Kulta ETF",   sector: "Hyödyke"    },
+];
+
+// ─── LOCALSTORAGE ──────────────────────────────────────────────
+function lsGet(key, fb) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch { return fb; } }
+function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
+
+// ─── DATA FETCH ────────────────────────────────────────────────
+async function fetchEurUsd(apiKey) {
+  try {
+    const r = await fetch(`https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=EUR&apikey=${apiKey}`);
+    const d = await r.json();
+    const rate = d?.["Realtime Currency Exchange Rate"]?.["5. Exchange Rate"];
+    return rate ? parseFloat(rate) : 0.92;
+  } catch { return 0.92; }
+}
+
+async function fetchQuote(symbol, apiKey) {
+  try {
+    const r = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`);
+    const d = await r.json();
+    const q = d["Global Quote"];
+    if (!q || !q["05. price"]) return null;
+    return {
+      price:     parseFloat(q["05. price"]).toFixed(2),
+      changePct: parseFloat(q["09. % change"]).toFixed(2),
+      high:      parseFloat(q["03. high"]).toFixed(2),
+      low:       parseFloat(q["04. low"]).toFixed(2),
+    };
+  } catch { return null; }
+}
+
+async function fetchMarketNews() {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 800,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        messages: [{ role: "user", content: `Hae tänään (${new Date().toLocaleDateString("fi-FI")}) tärkeimmät globaalit talousuutiset. Listaa 6-8 tapahtumaa lyhyinä lauseina (max 15 sanaa). Vastaa VAIN JSON: {"news":["uutinen1","uutinen2",...]}` }],
+      }),
+    });
+    const data = await res.json();
+    const text = data.content?.map(b => b.text||"").join("") || "";
+    const clean = text.replace(/```json|```/g,"").trim();
+    return JSON.parse(clean).news || [];
+  } catch { return []; }
+}
+
+// ─── SYSTEM PROMPT ─────────────────────────────────────────────
+function buildSystemPrompt(stocks, portfolio, news, nordnet) {
+  const now = new Date().toLocaleString("fi-FI");
+  const feeRates = {1:{pct:0.0006,min:3},2:{pct:0.001,min:5},3:{pct:0.0015,min:7},4:{pct:0.002,min:9}};
+  const fee = feeRates[nordnet.level] || feeRates[3];
+  const calcFee = eur => Math.max(fee.min, eur * fee.pct);
+
+  const marketSection = stocks.filter(s=>s.data).length > 0
+    ? `\n\n📊 KURSSITILANNE (${now}):\n` + stocks.filter(s=>s.data).map(s =>
+        `• ${s.name} (${s.symbol}): $${s.data.price} | ${parseFloat(s.data.changePct)>=0?"▲":"▼"} ${s.data.changePct}%`).join("\n")
+    : "";
+
+  let portfolioSection = "";
+  if (portfolio.length > 0) {
+    const rows = portfolio.map(p => {
+      const st = stocks.find(s=>s.symbol===p.symbol);
+      const cur = st?.data?.price ? parseFloat(st.data.price) : null;
+      const invested = (p.buyPrice*p.shares).toFixed(2);
+      const nowVal = cur ? (cur*p.shares).toFixed(2) : "—";
+      const gainE = cur ? ((cur-p.buyPrice)*p.shares).toFixed(2) : null;
+      const gainP = cur ? (((cur-p.buyPrice)/p.buyPrice)*100).toFixed(2) : null;
+      return `• ${p.name} (${p.symbol}): ${p.shares}kpl @ $${p.buyPrice} | Sijoitettu: $${invested} | Arvo: $${nowVal}${gainE!==null?` | Tuotto: ${gainE>=0?"+":""}$${gainE} (${gainP}%)`:""}`;
+    });
+    const ti = portfolio.reduce((s,p)=>s+p.buyPrice*p.shares,0);
+    const tn = portfolio.reduce((s,p)=>{ const st=stocks.find(x=>x.symbol===p.symbol); return s+(st?.data?.price?parseFloat(st.data.price):p.buyPrice)*p.shares; },0);
+    portfolioSection = `\n\n💼 SALKKU:\n${rows.join("\n")}\nYhteensä: $${ti.toFixed(2)} → $${tn.toFixed(2)} | Tuotto: ${tn-ti>=0?"+":""}$${(tn-ti).toFixed(2)}`;
+  }
+
+  const newsSection = news.length>0 ? `\n\n🌍 UUTISET:\n`+news.map(n=>`• ${n}`).join("\n") : "";
+  const nordnetSection = `\n\n🏦 NORDNET Taso ${nordnet.level}: ${fee.pct*100}% / min €${fee.min} | Järkevä min-osto: €${(fee.min/fee.pct).toFixed(0)}`;
+
+  return `Olet huippukokenut sijoitusneuvoija-tekoäly. Yhdistä kurssit, uutiset ja salkku analyysiin. Huomioi aina Nordnet-kaupankäyntikulut suosituksissa. Muistuta lopussa: "⚠️ Tämä on yleistä markkina-analyysiä, ei virallista sijoitusneuvontaa." Vastaa suomeksi.${marketSection}${portfolioSection}${newsSection}${nordnetSection}`;
+}
+
+// ─── LOADING DOTS ──────────────────────────────────────────────
+const Dots = () => (
+  <div style={{display:"flex",gap:5,padding:"4px 0"}}>
+    {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:"#00d4aa",animation:`dot 1.2s ease-in-out ${i*0.2}s infinite`}}/>)}
+  </div>
+);
+
+// ─── APP ────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab]         = useState("chat");
+  const [messages, setMessages] = useState([]);
+  const [input, setInput]     = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [stocks, setStocks]         = useState(MARKET_SYMBOLS.map(s=>({...s,data:null})));
+  const [news, setNews]             = useState([]);
+  const [loadingMarket, setLM]      = useState(false);
+  const [loadingNews, setLN]        = useState(false);
+  const [lastUpdated, setLastUpd]   = useState(null);
+
+  const [portfolio, setPortfolio]   = useState(()=>lsGet("sijoitus_portfolio",[]));
+  const [newPos, setNewPos]         = useState({symbol:"",name:"",shares:"",buyPrice:""});
+  const [posError, setPosError]     = useState("");
+
+  const [currency, setCurrency]     = useState("EUR");
+  const [eurUsd, setEurUsd]         = useState(0.92);
+
+  const [avKey, setAvKey]           = useState(()=>lsGet("sijoitus_avkey",DEFAULT_AV_KEY));
+  const [avKeyInput, setAvKeyInput] = useState(()=>lsGet("sijoitus_avkey",DEFAULT_AV_KEY));
+  const [nordnet, setNordnet]       = useState(()=>lsGet("sijoitus_nordnet",{level:3}));
+
+  const bottomRef = useRef(null);
+  const inputRef  = useRef(null);
+
+  useEffect(()=>{ refreshAll(avKey); }, []);
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [messages,loading]);
+  useEffect(()=>{ lsSet("sijoitus_portfolio",portfolio); }, [portfolio]);
+
+  async function refreshAll(key) {
+    const k = key||avKey;
+    setLM(true); setLN(true);
+    const [quotes,rate] = await Promise.all([
+      Promise.all(MARKET_SYMBOLS.map(s=>fetchQuote(s.symbol,k))),
+      fetchEurUsd(k),
+    ]);
+    setEurUsd(rate);
+    setStocks(MARKET_SYMBOLS.map((s,i)=>({...s,data:quotes[i]})));
+    setLastUpd(new Date());
+    setLM(false);
+    const n = await fetchMarketNews();
+    setNews(n); setLN(false);
+  }
+
+  async function sendMessage(text) {
+    const msg = text||input.trim();
+    if (!msg||loading) return;
+    setInput("");
+    const hist = [...messages,{role:"user",content:msg}];
+    setMessages(hist); setLoading(true);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:1000,
+          system: buildSystemPrompt(stocks,portfolio,news,nordnet),
+          messages: hist,
+        }),
+      });
+      const data = await res.json();
+      const reply = data.content?.map(b=>b.text||"").join("")||"Virhe.";
+      setMessages([...hist,{role:"assistant",content:reply}]);
+    } catch {
+      setMessages([...hist,{role:"assistant",content:"⚠️ Yhteysvirhe. Yritä uudelleen."}]);
+    } finally {
+      setLoading(false);
+      setTimeout(()=>inputRef.current?.focus(),100);
+    }
+  }
+
+  function addPosition() {
+    setPosError("");
+    if (!newPos.symbol.trim()||!newPos.name.trim()) { setPosError("Täytä ticker ja nimi."); return; }
+    if (!newPos.shares||isNaN(newPos.shares)||parseFloat(newPos.shares)<=0) { setPosError("Syötä kelvollinen kappalemäärä."); return; }
+    if (!newPos.buyPrice||isNaN(newPos.buyPrice)||parseFloat(newPos.buyPrice)<=0) { setPosError("Syötä kelvollinen hinta."); return; }
+    setPortfolio(prev=>[...prev,{
+      symbol: newPos.symbol.toUpperCase().trim(),
+      name:   newPos.name.trim(),
+      shares: parseFloat(newPos.shares),
+      buyPrice: currency==="EUR" ? parseFloat(newPos.buyPrice)/eurUsd : parseFloat(newPos.buyPrice),
+    }]);
+    setNewPos({symbol:"",name:"",shares:"",buyPrice:""});
+  }
+
+  const cc = p => parseFloat(p)>0?"#00d4aa":parseFloat(p)<0?"#ff5566":"#9fb3c5";
+  const sym = currency==="EUR"?"€":"$";
+  const conv = v => (currency==="EUR"?v*eurUsd:v).toFixed(2);
+  const cp   = s => conv(parseFloat(s));
+
+  function fmt(text) {
+    return text.split("\n").map((line,i)=>{
+      if (/^\*\*(.+)\*\*$/.test(line)) return <p key={i} style={{fontWeight:700,color:"#00d4aa",margin:"10px 0 3px"}}>{line.replace(/\*\*/g,"")}</p>;
+      if (line.startsWith("• ")||line.startsWith("- ")) return <p key={i} style={{margin:"3px 0",paddingLeft:14,borderLeft:"2px solid #00d4aa33"}}>{line.slice(2)}</p>;
+      if (line==="") return <br key={i}/>;
+      return <p key={i} style={{margin:"3px 0",lineHeight:1.75}}>{line}</p>;
+    });
+  }
+
+  const ti = portfolio.reduce((s,p)=>s+p.buyPrice*p.shares,0);
+  const tn = portfolio.reduce((s,p)=>{ const st=stocks.find(x=>x.symbol===p.symbol); return s+(st?.data?.price?parseFloat(st.data.price):p.buyPrice)*p.shares; },0);
+  const tg = tn-ti;
+  const tp = ti>0?(tg/ti*100):0;
+
+  const Field = ({ph,val,k,type="text"}) => (
+    <input placeholder={ph} value={val} type={type}
+      onChange={e=>setNewPos(prev=>({...prev,[k]:e.target.value}))}
+      onKeyDown={e=>e.key==="Enter"&&addPosition()}
+      style={{flex:1,minWidth:80,background:"#0a0f1a",border:"1px solid #2a4050",borderRadius:8,padding:"8px 10px",color:"#e8f0f8",fontFamily:"inherit",fontSize:13}}/>
+  );
+
+  // ── RENDER ──────────────────────────────────────────────────
+  return (
+    <div style={{height:"100%",background:"#050810",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+      {/* HEADER */}
+      <div className="safe-top" style={{padding:"0 16px 10px",borderBottom:"1px solid #00d4aa15",background:"#080c14",flexShrink:0,paddingTop:"max(14px,env(safe-area-inset-top))"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:32,height:32,borderRadius:8,background:"linear-gradient(135deg,#00d4aa,#0088cc)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,animation:"glow 3s ease infinite"}}>📈</div>
+            <div>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:16,color:"#fff"}}>SIJOITUS<span style={{color:"#00d4aa"}}>AI</span></div>
+              <div style={{fontSize:9,color:"#9ab0c0",letterSpacing:"0.1em",textTransform:"uppercase"}}>Reaaliaikainen · Uutiset · Salkku</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:5,alignItems:"center"}}>
+            {lastUpdated && <span style={{fontSize:9,color:"#9ab0c0"}}>{lastUpdated.toLocaleTimeString("fi-FI")}</span>}
+            <div style={{display:"flex",background:"#0a0f1a",border:"1px solid #2a4050",borderRadius:6,overflow:"hidden"}}>
+              {["USD","EUR"].map(c=>(
+                <button key={c} onClick={()=>setCurrency(c)} style={{background:currency===c?"#00d4aa22":"transparent",border:"none",padding:"4px 9px",color:currency===c?"#00d4aa":"#7a8fa3",fontSize:11,fontFamily:"inherit",fontWeight:currency===c?700:400}}>
+                  {c==="EUR"?"€":"$"}
+                </button>
+              ))}
+            </div>
+            <button className="hov" onClick={()=>refreshAll()} disabled={loadingMarket}
+              style={{background:"transparent",border:"1px solid #00d4aa33",borderRadius:6,padding:"4px 10px",color:"#00d4aa",fontSize:11,fontFamily:"inherit"}}>
+              {loadingMarket?"⟳…":"⟳"}
+            </button>
+          </div>
+        </div>
+        {/* Tabs */}
+        <div style={{display:"flex",gap:3}}>
+          {[["chat","💬 Chat"],["portfolio","💼 Salkku"],["settings","⚙️"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{
+              flex: id==="settings"?0:1,
+              background:tab===id?"#00d4aa18":"transparent",
+              border:`1px solid ${tab===id?"#00d4aa44":"#1a2535"}`,
+              borderRadius:7,padding:"6px 8px",
+              color:tab===id?"#00d4aa":"#7a8fa3",
+              fontSize:12,fontFamily:"inherit",transition:"all .2s"
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* TICKER */}
+      <div style={{background:"#070b12",borderBottom:"1px solid #00d4aa0d",padding:"6px 16px",overflowX:"auto",flexShrink:0}}>
+        <div style={{display:"flex",gap:16}}>
+          {stocks.map(s=>(
+            <div key={s.symbol} style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+              <span style={{fontSize:10,color:"#b0c4d4"}}>{s.symbol}</span>
+              {s.data
+                ? <><span style={{fontSize:12,fontWeight:600,color:"#fff"}}>{sym}{cp(s.data.price)}</span>
+                     <span style={{fontSize:10,color:cc(s.data.changePct),fontWeight:600}}>{parseFloat(s.data.changePct)>=0?"▲":"▼"}{Math.abs(s.data.changePct)}%</span></>
+                : <span style={{fontSize:10,color:"#5a7a8a"}}>{loadingMarket?"…":"—"}</span>
+              }
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ══ CHAT TAB ══ */}
+      {tab==="chat" && <>
+        {/* Kurssikortit */}
+        <div style={{padding:"10px 16px 0",flexShrink:0}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:7}}>
+            {stocks.filter(s=>s.data).map(s=>(
+              <div key={s.symbol} className="card"
+                onClick={()=>sendMessage(`Analysoi ${s.name} tilanne nyt – mitä uutiset ja kurssi kertovat?`)}
+                style={{background:"#0a0f1a",border:"1px solid #00d4aa1a",borderRadius:9,padding:"10px 12px",cursor:"pointer",transition:"all .2s"}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <div>
+                    <div style={{fontSize:10,color:"#7a8fa3"}}>{s.symbol}</div>
+                    <div style={{fontSize:11,color:"#b0c4d4"}}>{s.name}</div>
+                  </div>
+                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:parseFloat(s.data.changePct)>=0?"#00d4aa12":"#ff556612",color:cc(s.data.changePct),fontWeight:700}}>
+                    {parseFloat(s.data.changePct)>=0?"+":""}{s.data.changePct}%
+                  </span>
+                </div>
+                <div style={{fontSize:17,fontWeight:700,color:"#fff",fontFamily:"'Syne',sans-serif"}}>{sym}{cp(s.data.price)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Uutiset */}
+        {news.length>0 && (
+          <div style={{padding:"8px 16px 0",flexShrink:0}}>
+            <div style={{background:"#070b12",border:"1px solid #00d4aa15",borderRadius:9,padding:"9px 12px"}}>
+              <div style={{fontSize:9,color:"#9ab0c0",marginBottom:6,letterSpacing:"0.08em",textTransform:"uppercase"}}>🌍 Päivän uutiset</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                {news.map((n,i)=>(
+                  <span key={i} className="chip"
+                    onClick={()=>sendMessage(`Miten tämä uutinen vaikuttaa markkinoihin ja salkkuuni: "${n}"`)}
+                    style={{fontSize:10,color:"#bdd0df",border:"1px solid #2a4050",borderRadius:16,padding:"3px 10px",cursor:"pointer",transition:"all .2s"}}>
+                    {n}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Viestit */}
+        <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+          {messages.length===0 && (
+            <div style={{textAlign:"center",padding:"16px 0",animation:"up .5s ease"}}>
+              <p style={{color:"#9ab0c0",fontSize:12,marginBottom:12,lineHeight:1.7}}>
+                Minulla on <span style={{color:"#00d4aa"}}>kurssit</span>, <span style={{color:"#00d4aa"}}>uutiset</span> ja <span style={{color:"#00d4aa"}}>salkkusi</span> käytössä.
+              </p>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center"}}>
+                {["Analysoi salkkuni nyt","Mihin sijoittaisit 1000€?","Pitäisikö minun myydä jotain?","Miten maailmantilanne vaikuttaa?"].map(q=>(
+                  <button key={q} className="chip" onClick={()=>sendMessage(q)}
+                    style={{background:"transparent",border:"1px solid #2a4050",borderRadius:16,padding:"5px 12px",color:"#aac4d4",fontSize:11,fontFamily:"inherit",transition:"all .2s"}}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {messages.map((m,i)=>(
+            <div key={i} style={{marginBottom:14,display:"flex",flexDirection:"column",alignItems:m.role==="user"?"flex-end":"flex-start",animation:"up .3s ease"}}>
+              {m.role==="assistant" && <div style={{fontSize:9,color:"#8aacbc",marginBottom:3,letterSpacing:"0.1em",textTransform:"uppercase"}}>📊 SijoitusAI</div>}
+              <div style={{
+                maxWidth:"88%",padding:"10px 13px",
+                borderRadius:m.role==="user"?"14px 14px 4px 14px":"4px 14px 14px 14px",
+                background:m.role==="user"?"linear-gradient(135deg,#00d4aa,#0099bb)":"#0a0f1a",
+                color:m.role==="user"?"#050810":"#e8f0f8",
+                fontSize:13,lineHeight:1.7,
+                border:m.role==="assistant"?"1px solid #00d4aa15":"none",
+                boxShadow:m.role==="user"?"0 3px 14px #00d4aa33":"0 3px 14px #00000055",
+              }}>
+                {m.role==="user"?<p style={{margin:0,fontWeight:600}}>{m.content}</p>:fmt(m.content)}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div style={{animation:"up .3s ease"}}>
+              <div style={{fontSize:9,color:"#8aacbc",marginBottom:3,letterSpacing:"0.1em",textTransform:"uppercase"}}>📊 SijoitusAI</div>
+              <div style={{display:"inline-block",background:"#0a0f1a",border:"1px solid #00d4aa15",borderRadius:"4px 14px 14px 14px",padding:"10px 13px"}}>
+                <Dots/>
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef}/>
+        </div>
+
+        {/* Input */}
+        <div className="safe-bottom" style={{padding:"10px 16px",borderTop:"1px solid #00d4aa0d",background:"#080c14",flexShrink:0}}>
+          <div style={{display:"flex",gap:7,alignItems:"flex-end",background:"#0a0f1a",border:"1px solid #00d4aa25",borderRadius:13,padding:"6px 6px 6px 13px"}}>
+            <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
+              placeholder="Kysy markkinoista tai salkustasi…" rows={1}
+              style={{flex:1,background:"transparent",border:"none",color:"#e8f0f8",fontFamily:"inherit",fontSize:13,resize:"none",paddingTop:4,lineHeight:1.5,maxHeight:80,overflowY:"auto"}}/>
+            <button onClick={()=>sendMessage()} disabled={!input.trim()||loading}
+              style={{width:34,height:34,borderRadius:8,border:"none",
+                background:input.trim()&&!loading?"linear-gradient(135deg,#00d4aa,#0099bb)":"#111820",
+                color:input.trim()&&!loading?"#050810":"#5a6e80",
+                fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",
+                transition:"all .2s",flexShrink:0,
+                boxShadow:input.trim()&&!loading?"0 0 12px #00d4aa44":"none",
+              }}>↑</button>
+          </div>
+          <p style={{textAlign:"center",fontSize:9,color:"#7a9aaa",margin:"5px 0 0"}}>⚠️ Ei virallista sijoitusneuvontaa</p>
+        </div>
+      </>}
+
+      {/* ══ SALKKU TAB ══ */}
+      {tab==="portfolio" && (
+        <div style={{flex:1,overflowY:"auto",padding:"14px 16px"}}>
+          {portfolio.length>0 && (
+            <div style={{background:"#0a0f1a",border:"1px solid #00d4aa25",borderRadius:11,padding:"14px 16px",marginBottom:14,animation:"up .4s ease"}}>
+              <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>📊 Yhteenveto</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                {[["Sijoitettu",`${sym}${conv(ti)}`,"#b0c4d4"],["Nykyarvo",`${sym}${conv(tn)}`,"#e8f0f8"],
+                  ["Tuotto",`${tg>=0?"+":""}${sym}${conv(Math.abs(tg))}`,cc(tg)],["Tuotto %",`${tp>=0?"+":""}${tp.toFixed(2)}%`,cc(tp)]
+                ].map(([l,v,c])=>(
+                  <div key={l}>
+                    <div style={{fontSize:9,color:"#9ab0c0",marginBottom:2}}>{l}</div>
+                    <div style={{fontSize:16,fontWeight:700,color:c,fontFamily:"'Syne',sans-serif"}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <button onClick={()=>{setTab("chat");sendMessage("Analysoi salkkuni perusteellisesti");}}
+                style={{background:"#00d4aa18",border:"1px solid #00d4aa33",borderRadius:7,padding:"6px 14px",color:"#00d4aa",fontSize:11,fontFamily:"inherit"}}>
+                💬 AI-analyysi salkusta
+              </button>
+            </div>
+          )}
+
+          {portfolio.length>0 && (
+            <div style={{marginBottom:14}}>
+              {portfolio.map((p,i)=>{
+                const st = stocks.find(s=>s.symbol===p.symbol);
+                const cur = st?.data?.price?parseFloat(st.data.price):null;
+                const inv = p.buyPrice*p.shares;
+                const now = cur?cur*p.shares:null;
+                const gE = now?now-inv:null;
+                const gP = gE?(gE/inv*100):null;
+                return (
+                  <div key={i} style={{background:"#0a0f1a",border:"1px solid #2a3d4e",borderRadius:9,padding:"11px 13px",marginBottom:7,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                    <div style={{flex:1,minWidth:100}}>
+                      <div style={{fontWeight:600,color:"#e8f0f8",fontSize:13}}>{p.name}</div>
+                      <div style={{fontSize:10,color:"#aac4d4"}}>{p.symbol} · {p.shares}kpl · hankinta {sym}{conv(p.buyPrice)}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:13,color:"#e8f0f8",fontWeight:600}}>{now?`${sym}${conv(now)}`:"—"}</div>
+                      {gE!==null && <div style={{fontSize:11,color:cc(gE),fontWeight:700}}>{gE>=0?"+":"-"}{sym}{conv(Math.abs(gE))} ({gP>=0?"+":""}{gP.toFixed(1)}%)</div>}
+                    </div>
+                    <button onClick={()=>setPortfolio(prev=>prev.filter((_,idx)=>idx!==i))}
+                      style={{background:"transparent",border:"1px solid #3a1a1a",borderRadius:5,padding:"3px 8px",color:"#774444",fontSize:11,fontFamily:"inherit"}}>✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"14px"}}>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>+ Lisää positio</div>
+            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:8}}>
+              <div style={{display:"flex",gap:7}}>
+                <Field ph="Ticker (AAPL)" val={newPos.symbol} k="symbol"/>
+                <Field ph="Nimi (Apple)" val={newPos.name} k="name"/>
+              </div>
+              <div style={{display:"flex",gap:7}}>
+                <Field ph="Kpl (esim. 10)" val={newPos.shares} k="shares" type="number"/>
+                <Field ph={`Hinta ${sym}/kpl`} val={newPos.buyPrice} k="buyPrice" type="number"/>
+              </div>
+            </div>
+            {posError && <div style={{fontSize:11,color:"#ff5566",marginBottom:7}}>⚠️ {posError}</div>}
+            <button onClick={addPosition}
+              style={{background:"linear-gradient(135deg,#00d4aa,#0099bb)",border:"none",borderRadius:8,padding:"9px 18px",color:"#050810",fontSize:13,fontWeight:700,fontFamily:"inherit",width:"100%"}}>
+              Lisää salkkuun
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ ASETUKSET TAB ══ */}
+      {tab==="settings" && (
+        <div style={{flex:1,overflowY:"auto",padding:"14px 16px"}}>
+          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🔑 Alpha Vantage API-avain</div>
+            <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
+              Ilmainen: <a href="https://www.alphavantage.co/support/#api-key" target="_blank" style={{color:"#00d4aa"}}>alphavantage.co</a>
+              <br/><span style={{color:"#7a9aaa"}}>Demo-avaimella toimii vain MSFT.</span>
+            </p>
+            <div style={{display:"flex",gap:7}}>
+              <input value={avKeyInput} onChange={e=>setAvKeyInput(e.target.value)} placeholder="API-avain…"
+                style={{flex:1,background:"#050810",border:"1px solid #2a4050",borderRadius:7,padding:"7px 12px",color:"#e8f0f8",fontFamily:"inherit",fontSize:12}}/>
+              <button onClick={()=>{lsSet("sijoitus_avkey",avKeyInput);setAvKey(avKeyInput);refreshAll(avKeyInput);}}
+                style={{background:"linear-gradient(135deg,#00d4aa,#0099bb)",border:"none",borderRadius:7,padding:"7px 14px",color:"#050810",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
+                Tallenna
+              </button>
+            </div>
+            <div style={{marginTop:10,padding:"8px 12px",background:"#070b12",border:"1px solid #2a3d4e",borderRadius:7,fontSize:11,color:"#aac4d4"}}>
+              💱 EUR/USD: <span style={{color:"#00d4aa",fontWeight:700}}>1 USD = {eurUsd.toFixed(4)} €</span>
+            </div>
+          </div>
+
+          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px"}}>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🏦 Nordnet-taso</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {[{level:1,label:"Taso 1 – >50 kauppaa/kk",fee:"0,06% / min 3€"},
+                {level:2,label:"Taso 2 – 11–50 kauppaa/kk",fee:"0,10% / min 5€"},
+                {level:3,label:"Taso 3 – 1–10 kauppaa/kk",fee:"0,15% / min 7€"},
+                {level:4,label:"Taso 4 – 0 kauppaa/kk",fee:"0,20% / min 9€"},
+              ].map(t=>(
+                <div key={t.level} onClick={()=>{const n={level:t.level};setNordnet(n);lsSet("sijoitus_nordnet",n);}}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,cursor:"pointer",transition:"all .2s",
+                    background:nordnet.level===t.level?"#00d4aa18":"#070b12",
+                    border:`1px solid ${nordnet.level===t.level?"#00d4aa44":"#2a3d4e"}`,
+                  }}>
+                  <div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${nordnet.level===t.level?"#00d4aa":"#6b7d8f"}`,background:nordnet.level===t.level?"#00d4aa":"transparent",flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,color:nordnet.level===t.level?"#00d4aa":"#d5e5f0",fontWeight:600}}>{t.label}</div>
+                    <div style={{fontSize:10,color:"#9ab0c0"}}>{t.fee}</div>
+                  </div>
+                  {nordnet.level===t.level && <span style={{fontSize:10,color:"#00d4aa"}}>✓</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+
+// Service Worker rekisteröinti
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
