@@ -53,6 +53,9 @@ const { useState, useRef, useEffect } = React;
 
 // ─── VAKIOT ────────────────────────────────────────────────────
 const DEFAULT_AV_KEY = "demo";
+// ← Vaihda tähän Cloudflare Worker -osoitteesi huomenna!
+const CF_WORKER_URL = "CLOUDFLARE_WORKER_URL_TAHAN";
+
 const MARKET_SYMBOLS = [
   { symbol: "AAPL", name: "Apple",       sector: "Teknologia" },
   { symbol: "MSFT", name: "Microsoft",   sector: "Teknologia" },
@@ -91,12 +94,13 @@ async function fetchQuote(symbol, apiKey) {
   } catch { return null; }
 }
 
-async function fetchMarketNews(apiKey) {
-  if (!apiKey) return [];
+async function fetchMarketNews(apiKey, workerUrl) {
+  const url = workerUrl || CF_WORKER_URL;
+  if (!apiKey || url === "CLOUDFLARE_WORKER_URL_TAHAN" || !url) return [];
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 800,
@@ -177,6 +181,8 @@ function App() {
   const [nordnet, setNordnet]       = useState(()=>lsGet("sijoitus_nordnet",{level:3}));
   const [antKey, setAntKey]         = useState(()=>lsGet("sijoitus_antkey",""));
   const [antKeyInput, setAntKeyInput] = useState(()=>lsGet("sijoitus_antkey",""));
+  const [cfUrl, setCfUrl]           = useState(()=>lsGet("sijoitus_cfurl",""));
+  const [cfUrlInput, setCfUrlInput] = useState(()=>lsGet("sijoitus_cfurl",""));
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
@@ -196,7 +202,7 @@ function App() {
     setStocks(MARKET_SYMBOLS.map((s,i)=>({...s,data:quotes[i]})));
     setLastUpd(new Date());
     setLM(false);
-    const n = await fetchMarketNews(antKey);
+    const n = await fetchMarketNews(antKey, cfUrl);
     setNews(n); setLN(false);
   }
 
@@ -207,8 +213,9 @@ function App() {
     const hist = [...messages,{role:"user",content:msg}];
     setMessages(hist); setLoading(true);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST", headers:{"Content-Type":"application/json","x-api-key":antKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      const apiUrl = cfUrl || CF_WORKER_URL;
+      const res = await fetch(apiUrl,{
+        method:"POST", headers:{"Content-Type":"application/json","x-api-key":antKey},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:1000,
           system: buildSystemPrompt(stocks,portfolio,news,nordnet),
@@ -219,7 +226,7 @@ function App() {
       const reply = data.content?.map(b=>b.text||"").join("")||"Virhe.";
       setMessages([...hist,{role:"assistant",content:reply}]);
     } catch {
-      setMessages([...hist,{role:"assistant",content:"⚠️ Yhteysvirhe. Yritä uudelleen."}]);
+      setMessages([...hist,{role:"assistant",content:"⚠️ Yhteysvirhe. Tarkista että Anthropic API-avain on syötetty Asetuksiin."}]);
     } finally {
       setLoading(false);
       setTimeout(()=>inputRef.current?.focus(),100);
@@ -505,6 +512,23 @@ function App() {
       {/* ══ ASETUKSET TAB ══ */}
       {tab==="settings" && (
         <div style={{flex:1,overflowY:"auto",padding:"14px 16px"}}>
+
+          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>☁️ Cloudflare Worker -osoite</div>
+            <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
+              Tarvitaan AI-chat ja uutisiin. Syötä Worker-osoite tähän.
+            </p>
+            <div style={{display:"flex",gap:7}}>
+              <input value={cfUrlInput||""} onChange={e=>setCfUrlInput(e.target.value)} placeholder="https://sijoitusai.sinunnimesi.workers.dev"
+                style={{flex:1,background:"#050810",border:"1px solid #2a4050",borderRadius:7,padding:"7px 12px",color:"#e8f0f8",fontFamily:"inherit",fontSize:11}}/>
+              <button onClick={()=>{lsSet("sijoitus_cfurl",cfUrlInput);setCfUrl(cfUrlInput);}}
+                style={{background:"linear-gradient(135deg,#00d4aa,#0099bb)",border:"none",borderRadius:7,padding:"7px 14px",color:"#050810",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
+                Tallenna
+              </button>
+            </div>
+            {cfUrl && cfUrl !== "CLOUDFLARE_WORKER_URL_TAHAN" && <div style={{marginTop:8,fontSize:11,color:"#00d4aa"}}>✓ Worker-osoite tallennettu</div>}
+          </div>
+
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🤖 Anthropic API-avain (Claude)</div>
             <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
