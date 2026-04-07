@@ -53,8 +53,6 @@ const { useState, useRef, useEffect } = React;
 
 // ─── VAKIOT ────────────────────────────────────────────────────
 const DEFAULT_AV_KEY = "demo";
-// ← Vaihda tähän Cloudflare Worker -osoitteesi huomenna!
-const CF_WORKER_URL = "CLOUDFLARE_WORKER_URL_TAHAN";
 
 const MARKET_SYMBOLS = [
   { symbol: "AAPL", name: "Apple",       sector: "Teknologia" },
@@ -95,10 +93,9 @@ async function fetchQuote(symbol, apiKey) {
 }
 
 async function fetchMarketNews(apiKey, workerUrl) {
-  const url = workerUrl || CF_WORKER_URL;
-  if (!apiKey || url === "CLOUDFLARE_WORKER_URL_TAHAN" || !url) return [];
+  if (!apiKey || !workerUrl) return [];
   try {
-    const res = await fetch(url, {
+    const res = await fetch(workerUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey },
       body: JSON.stringify({
@@ -213,8 +210,12 @@ function App() {
     const hist = [...messages,{role:"user",content:msg}];
     setMessages(hist); setLoading(true);
     try {
-      const apiUrl = cfUrl || CF_WORKER_URL;
-      const res = await fetch(apiUrl,{
+      if (!cfUrl) {
+        setMessages([...hist,{role:"assistant",content:"⚠️ Syötä Cloudflare Worker -osoite Asetuksiin ensin!"}]);
+        setLoading(false);
+        return;
+      }
+      const res = await fetch(cfUrl,{
         method:"POST", headers:{"Content-Type":"application/json","x-api-key":antKey},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:1000,
