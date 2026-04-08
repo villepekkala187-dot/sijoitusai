@@ -246,15 +246,22 @@ function App() {
       symbol: newPos.symbol.toUpperCase().trim(),
       name:   newPos.name.trim(),
       shares: parseFloat(newPos.shares),
-      buyPrice: currency==="EUR" ? parseFloat(newPos.buyPrice)/eurUsd : parseFloat(newPos.buyPrice),
+      buyPrice: parseFloat(newPos.buyPrice), // Tallennetaan aina euroina
     }]);
     setNewPos({symbol:"",name:"",shares:"",buyPrice:""});
   }
 
   const cc = p => parseFloat(p)>0?"#00d4aa":parseFloat(p)<0?"#ff5566":"#9fb3c5";
-  const sym = currency==="EUR"?"€":"$";
-  const conv = v => (currency==="EUR"?v*eurUsd:v).toFixed(2);
-  const cp   = s => conv(parseFloat(s));
+  const sym = "€"; // Aina euroina
+  // Muunna kurssidata euroiksi (kurssit voivat olla USD, SEK, jne.)
+  function convPrice(priceStr, stockCurrency) {
+    const p = parseFloat(priceStr);
+    if (!stockCurrency || stockCurrency === "EUR") return p.toFixed(2);
+    if (stockCurrency === "USD") return (p * eurUsd).toFixed(2);
+    if (stockCurrency === "SEK") return (p * 0.088).toFixed(2); // SEK→EUR
+    return p.toFixed(2);
+  }
+  const cp = s => convPrice(s, "USD"); // Ticker-palkki olettaa USD
 
   function fmt(text) {
     return text.split("\n").map((line,i)=>{
@@ -266,7 +273,12 @@ function App() {
   }
 
   const ti = portfolio.reduce((s,p)=>s+p.buyPrice*p.shares,0);
-  const tn = portfolio.reduce((s,p)=>{ const st=stocks.find(x=>x.symbol===p.symbol); return s+(st?.data?.price?parseFloat(st.data.price):p.buyPrice)*p.shares; },0);
+  const tn = portfolio.reduce((s,p)=>{
+    const st=stocks.find(x=>x.symbol===p.symbol);
+    if (!st?.data?.price) return s + p.buyPrice*p.shares;
+    const priceEur = parseFloat(convPrice(st.data.price, st.data.currency));
+    return s + priceEur*p.shares;
+  },0);
   const tg = tn-ti;
   const tp = ti>0?(tg/ti*100):0;
 
@@ -293,13 +305,7 @@ function App() {
           </div>
           <div style={{display:"flex",gap:5,alignItems:"center"}}>
             {lastUpdated && <span style={{fontSize:9,color:"#9ab0c0"}}>{lastUpdated.toLocaleTimeString("fi-FI")}</span>}
-            <div style={{display:"flex",background:"#0a0f1a",border:"1px solid #2a4050",borderRadius:6,overflow:"hidden"}}>
-              {["USD","EUR"].map(c=>(
-                <button key={c} onClick={()=>setCurrency(c)} style={{background:currency===c?"#00d4aa22":"transparent",border:"none",padding:"4px 9px",color:currency===c?"#00d4aa":"#7a8fa3",fontSize:11,fontFamily:"inherit",fontWeight:currency===c?700:400}}>
-                  {c==="EUR"?"€":"$"}
-                </button>
-              ))}
-            </div>
+            <span style={{fontSize:10,color:"#00d4aa",fontWeight:700}}>€ EUR</span>
             <button className="hov" onClick={()=>refreshAll()} disabled={loadingMarket}
               style={{background:"transparent",border:"1px solid #00d4aa33",borderRadius:6,padding:"4px 10px",color:"#00d4aa",fontSize:11,fontFamily:"inherit"}}>
               {loadingMarket?"⟳…":"⟳"}
@@ -429,8 +435,8 @@ function App() {
             <div style={{background:"#0a0f1a",border:"1px solid #00d4aa25",borderRadius:11,padding:"14px 16px",marginBottom:14,animation:"up .4s ease"}}>
               <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>📊 Yhteenveto</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-                {[["Sijoitettu",`${sym}${conv(ti)}`,"#b0c4d4"],["Nykyarvo",`${sym}${conv(tn)}`,"#e8f0f8"],
-                  ["Tuotto",`${tg>=0?"+":""}${sym}${conv(Math.abs(tg))}`,cc(tg)],["Tuotto %",`${tp>=0?"+":""}${tp.toFixed(2)}%`,cc(tp)]
+                {[["Sijoitettu",`€${ti.toFixed(2)}`,"#b0c4d4"],["Nykyarvo",`€${tn.toFixed(2)}`,"#e8f0f8"],
+                  ["Tuotto",`${tg>=0?"+":""}€${Math.abs(tg).toFixed(2)}`,cc(tg)],["Tuotto %",`${tp>=0?"+":""}${tp.toFixed(2)}%`,cc(tp)]
                 ].map(([l,v,c])=>(
                   <div key={l}>
                     <div style={{fontSize:9,color:"#9ab0c0",marginBottom:2}}>{l}</div>
@@ -448,20 +454,20 @@ function App() {
             <div style={{marginBottom:14}}>
               {portfolio.map((p,i)=>{
                 const st = stocks.find(s=>s.symbol===p.symbol);
-                const cur = st?.data?.price?parseFloat(st.data.price):null;
-                const inv = p.buyPrice*p.shares;
-                const now = cur?cur*p.shares:null;
-                const gE = now?now-inv:null;
-                const gP = gE?(gE/inv*100):null;
+                const priceEur = st?.data?.price ? parseFloat(convPrice(st.data.price, st.data.currency)) : null;
+                const inv = p.buyPrice*p.shares; // euroina
+                const now = priceEur ? priceEur*p.shares : null;
+                const gE = now ? now-inv : null;
+                const gP = gE ? (gE/inv*100) : null;
                 return (
                   <div key={i} style={{background:"#0a0f1a",border:"1px solid #2a3d4e",borderRadius:9,padding:"11px 13px",marginBottom:7,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                     <div style={{flex:1,minWidth:100}}>
                       <div style={{fontWeight:600,color:"#e8f0f8",fontSize:13}}>{p.name}</div>
-                      <div style={{fontSize:10,color:"#aac4d4"}}>{p.symbol} · {p.shares}kpl · hankinta {sym}{conv(p.buyPrice)}</div>
+                      <div style={{fontSize:10,color:"#aac4d4"}}>{p.symbol} · {p.shares}kpl · hankinta {sym}{p.buyPrice.toFixed(2)}</div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:13,color:"#e8f0f8",fontWeight:600}}>{now?`${sym}${conv(now)}`:"—"}</div>
-                      {gE!==null && <div style={{fontSize:11,color:cc(gE),fontWeight:700}}>{gE>=0?"+":"-"}{sym}{conv(Math.abs(gE))} ({gP>=0?"+":""}{gP.toFixed(1)}%)</div>}
+                      <div style={{fontSize:13,color:"#e8f0f8",fontWeight:600}}>{now?`${sym}${now.toFixed(2)}`:"—"}</div>
+                      {gE!==null && <div style={{fontSize:11,color:cc(gE),fontWeight:700}}>{gE>=0?"+":"-"}{sym}{Math.abs(gE).toFixed(2)} ({gP>=0?"+":""}{gP.toFixed(1)}%)</div>}
                     </div>
                     <button onClick={()=>setPortfolio(prev=>prev.filter((_,idx)=>idx!==i))}
                       style={{background:"transparent",border:"1px solid #3a1a1a",borderRadius:5,padding:"3px 8px",color:"#774444",fontSize:11,fontFamily:"inherit"}}>✕</button>
