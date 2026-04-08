@@ -52,8 +52,6 @@
 const { useState, useRef, useEffect } = React;
 
 // ─── VAKIOT ────────────────────────────────────────────────────
-const DEFAULT_AV_KEY = "demo";
-
 const MARKET_SYMBOLS = [
   { symbol: "AAPL",     name: "Apple",         sector: "Teknologia" },
   { symbol: "MSFT",     name: "Microsoft",     sector: "Teknologia" },
@@ -68,16 +66,18 @@ const MARKET_SYMBOLS = [
 function lsGet(key, fb) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch { return fb; } }
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
-// ─── DATA FETCH ────────────────────────────────────────────────
-async function fetchEurUsd(workerUrl) {
+// ─── VALUUTTAKURSSIT ───────────────────────────────────────────
+// Haetaan dynaamisesti EUR/USD ja SEK/EUR
+async function fetchRate(symbol, workerUrl, fallback) {
   try {
-    if (!workerUrl) return 0.92;
-    const r = await fetch(`${workerUrl}?symbol=EURUSD=X`);
+    if (!workerUrl) return fallback;
+    const r = await fetch(`${workerUrl}?symbol=${symbol}`);
     const d = await r.json();
-    return d.price ? parseFloat(d.price) : 0.92;
-  } catch { return 0.92; }
+    return d.price ? parseFloat(d.price) : fallback;
+  } catch { return fallback; }
 }
 
+// ─── DATA FETCH ────────────────────────────────────────────────
 async function fetchQuote(symbol, workerUrl) {
   if (!workerUrl) return null;
   try {
@@ -114,38 +114,56 @@ async function fetchMarketNews(apiKey, workerUrl) {
   } catch { return []; }
 }
 
+// ─── VALUUTTAMUUNNOS (kurssi → EUR) ───────────────────────────
+function toEur(price, currency, rates) {
+  const p = parseFloat(price);
+  if (isNaN(p)) return null;
+  if (!currency || currency === "EUR") return p;
+  if (currency === "USD") return p * rates.eurUsd;
+  if (currency === "SEK") return p * rates.sekEur;
+  // GBP, DKK jne. — lisää tarvittaessa
+  if (currency === "GBP") return p * (rates.gbpEur || 1.16);
+  return p; // tuntematon valuutta → oletetaan EUR
+}
+
 // ─── SYSTEM PROMPT ─────────────────────────────────────────────
-function buildSystemPrompt(stocks, portfolio, news, nordnet) {
+function buildSystemPrompt(stocks, portfolio, news, nordnet, rates) {
   const now = new Date().toLocaleString("fi-FI");
   const feeRates = {1:{pct:0.0006,min:3},2:{pct:0.001,min:5},3:{pct:0.0015,min:7},4:{pct:0.002,min:9}};
   const fee = feeRates[nordnet.level] || feeRates[3];
-  const calcFee = eur => Math.max(fee.min, eur * fee.pct);
 
   const marketSection = stocks.filter(s=>s.data).length > 0
-    ? `\n\n📊 KURSSITILANNE (${now}):\n` + stocks.filter(s=>s.data).map(s =>
-        `• ${s.name} (${s.symbol}): $${s.data.price} | ${parseFloat(s.data.changePct)>=0?"▲":"▼"} ${s.data.changePct}%`).join("\n")
+    ? `\n\n📊 KURSSITILANNE (${now}):\n` + stocks.filter(s=>s.data).map(s => {
+        const eurPrice = toEur(s.data.price, s.data.currency, rates);
+        return `• ${s.name} (${s.symbol}): €${eurPrice ? eurPrice.toFixed(2) : "—"} (${s.data.currency}) | ${parseFloat(s.data.changePct)>=0?"▲":"▼"} ${s.data.changePct}%`;
+      }).join("\n")
     : "";
 
   let portfolioSection = "";
   if (portfolio.length > 0) {
     const rows = portfolio.map(p => {
       const st = stocks.find(s=>s.symbol===p.symbol);
-      const cur = st?.data?.price ? parseFloat(st.data.price) : null;
+      const curEur = st?.data?.price ? toEur(st.data.price, st.data.currency, rates) : null;
       const invested = (p.buyPrice*p.shares).toFixed(2);
-      const nowVal = cur ? (cur*p.shares).toFixed(2) : "—";
-      const gainE = cur ? ((cur-p.buyPrice)*p.shares).toFixed(2) : null;
-      const gainP = cur ? (((cur-p.buyPrice)/p.buyPrice)*100).toFixed(2) : null;
-      return `• ${p.name} (${p.symbol}): ${p.shares}kpl @ $${p.buyPrice} | Sijoitettu: $${invested} | Arvo: $${nowVal}${gainE!==null?` | Tuotto: ${gainE>=0?"+":""}$${gainE} (${gainP}%)`:""}`;
+      const nowVal = curEur ? (curEur*p.shares).toFixed(2) : "—";
+      const gainE = curEur ? ((curEur-p.buyPrice)*p.shares).toFixed(2) : null;
+      const gainP = curEur ? (((curEur-p.buyPrice)/p.buyPrice)*100).toFixed(2) : null;
+      return `• ${p.name} (${p.symbol}): ${p.shares}kpl @ €${p.buyPrice} | Sijoitettu: €${invested} | Arvo: €${nowVal}${gainE!==null?` | Tuotto: ${gainE>=0?"+":""}€${gainE} (${gainP}%)`:""}`;
     });
     const ti = portfolio.reduce((s,p)=>s+p.buyPrice*p.shares,0);
-    const tn = portfolio.reduce((s,p)=>{ const st=stocks.find(x=>x.symbol===p.symbol); return s+(st?.data?.price?parseFloat(st.data.price):p.buyPrice)*p.shares; },0);
-    portfolioSection = `\n\n💼 SALKKU:\n${rows.join("\n")}\nYhteensä: $${ti.toFixed(2)} → $${tn.toFixed(2)} | Tuotto: ${tn-ti>=0?"+":""}$${(tn-ti).toFixed(2)}`;
+    const tn = portfolio.reduce((s,p)=>{
+      const st=stocks.find(x=>x.symbol===p.symbol);
+      const curEur = st?.data?.price ? toEur(st.data.price, st.data.currency, rates) : null;
+      return s + (curEur || p.buyPrice)*p.shares;
+    },0);
+    portfolioSection = `\n\n💼 SALKKU (kaikki euroina):\n${rows.join("\n")}\nYhteensä: €${ti.toFixed(2)} → €${tn.toFixed(2)} | Tuotto: ${tn-ti>=0?"+":""}€${(tn-ti).toFixed(2)}`;
   }
 
   const newsSection = news.length>0 ? `\n\n🌍 UUTISET:\n`+news.map(n=>`• ${n}`).join("\n") : "";
   const nordnetSection = `\n\n🏦 NORDNET Taso ${nordnet.level}: ${fee.pct*100}% / min €${fee.min} | Järkevä min-osto: €${(fee.min/fee.pct).toFixed(0)}`;
+  const rateSection = `\n\n💱 VALUUTTAKURSSIT: 1 USD = ${rates.eurUsd.toFixed(4)} EUR | 1 SEK = ${rates.sekEur.toFixed(4)} EUR`;
 
-  return `Olet huippukokenut sijoitusneuvoija-tekoäly. Yhdistä kurssit, uutiset ja salkku analyysiin. Huomioi aina Nordnet-kaupankäyntikulut suosituksissa. Muistuta lopussa: "⚠️ Tämä on yleistä markkina-analyysiä, ei virallista sijoitusneuvontaa." Vastaa suomeksi.${marketSection}${portfolioSection}${newsSection}${nordnetSection}`;
+  return `Olet huippukokenut sijoitusneuvoija-tekoäly. Yhdistä kurssit, uutiset ja salkku analyysiin. Kaikki hinnat ovat euroina. Huomioi aina Nordnet-kaupankäyntikulut suosituksissa. Muistuta lopussa: "⚠️ Tämä on yleistä markkina-analyysiä, ei virallista sijoitusneuvontaa." Vastaa suomeksi.${marketSection}${portfolioSection}${newsSection}${nordnetSection}${rateSection}`;
 }
 
 // ─── LOADING DOTS ──────────────────────────────────────────────
@@ -172,11 +190,9 @@ function App() {
   const [newPos, setNewPos]         = useState({symbol:"",name:"",shares:"",buyPrice:""});
   const [posError, setPosError]     = useState("");
 
-  const [currency, setCurrency]     = useState("EUR");
-  const [eurUsd, setEurUsd]         = useState(0.92);
+  // Valuuttakurssit — haetaan dynaamisesti
+  const [rates, setRates] = useState({ eurUsd: 0.92, sekEur: 0.088 });
 
-  const [avKey, setAvKey]           = useState(()=>lsGet("sijoitus_avkey",DEFAULT_AV_KEY));
-  const [avKeyInput, setAvKeyInput] = useState(()=>lsGet("sijoitus_avkey",DEFAULT_AV_KEY));
   const [nordnet, setNordnet]       = useState(()=>lsGet("sijoitus_nordnet",{level:3}));
   const [antKey, setAntKey]         = useState(()=>lsGet("sijoitus_antkey",""));
   const [antKeyInput, setAntKeyInput] = useState(()=>lsGet("sijoitus_antkey",""));
@@ -186,23 +202,25 @@ function App() {
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
 
-  useEffect(()=>{ refreshAll(avKey); }, []);
+  useEffect(()=>{ refreshAll(); }, []);
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [messages,loading]);
   useEffect(()=>{ lsSet("sijoitus_portfolio",portfolio); }, [portfolio]);
 
-  async function refreshAll(key) {
-    const k = key||avKey;
+  async function refreshAll() {
     setLM(true); setLN(true);
     const workerUrl = cfUrl || lsGet("sijoitus_cfurl","");
-    const [quotes,rate] = await Promise.all([
+    const [quotes, eurUsdRate, sekEurRate] = await Promise.all([
       Promise.all(MARKET_SYMBOLS.map(s=>fetchQuote(s.symbol, workerUrl))),
-      fetchEurUsd(workerUrl),
+      fetchRate("EURUSD=X", workerUrl, 0.92),
+      fetchRate("SEKEUR=X", workerUrl, 0.088),
     ]);
-    setEurUsd(rate);
+    const newRates = { eurUsd: eurUsdRate, sekEur: sekEurRate };
+    setRates(newRates);
     setStocks(MARKET_SYMBOLS.map((s,i)=>({...s,data:quotes[i]})));
     setLastUpd(new Date());
     setLM(false);
-    const n = await fetchMarketNews(antKey, cfUrl);
+    const currentAntKey = antKey || lsGet("sijoitus_antkey","");
+    const n = await fetchMarketNews(currentAntKey, workerUrl);
     setNews(n); setLN(false);
   }
 
@@ -213,16 +231,18 @@ function App() {
     const hist = [...messages,{role:"user",content:msg}];
     setMessages(hist); setLoading(true);
     try {
-      if (!cfUrl) {
+      const workerUrl = cfUrl || lsGet("sijoitus_cfurl","");
+      if (!workerUrl) {
         setMessages([...hist,{role:"assistant",content:"⚠️ Syötä Cloudflare Worker -osoite Asetuksiin ensin!"}]);
         setLoading(false);
         return;
       }
-      const res = await fetch(cfUrl,{
-        method:"POST", headers:{"Content-Type":"application/json","x-api-key":antKey},
+      const currentAntKey = antKey || lsGet("sijoitus_antkey","");
+      const res = await fetch(workerUrl,{
+        method:"POST", headers:{"Content-Type":"application/json","x-api-key":currentAntKey},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:1000,
-          system: buildSystemPrompt(stocks,portfolio,news,nordnet),
+          system: buildSystemPrompt(stocks,portfolio,news,nordnet,rates),
           messages: hist,
         }),
       });
@@ -230,7 +250,7 @@ function App() {
       const reply = data.content?.map(b=>b.text||"").join("")||"Virhe.";
       setMessages([...hist,{role:"assistant",content:reply}]);
     } catch {
-      setMessages([...hist,{role:"assistant",content:"⚠️ Yhteysvirhe. Tarkista että Anthropic API-avain on syötetty Asetuksiin."}]);
+      setMessages([...hist,{role:"assistant",content:"⚠️ Yhteysvirhe. Tarkista että Anthropic API-avain ja Worker-osoite on syötetty Asetuksiin."}]);
     } finally {
       setLoading(false);
       setTimeout(()=>inputRef.current?.focus(),100);
@@ -241,7 +261,7 @@ function App() {
     setPosError("");
     if (!newPos.symbol.trim()||!newPos.name.trim()) { setPosError("Täytä ticker ja nimi."); return; }
     if (!newPos.shares||isNaN(newPos.shares)||parseFloat(newPos.shares)<=0) { setPosError("Syötä kelvollinen kappalemäärä."); return; }
-    if (!newPos.buyPrice||isNaN(newPos.buyPrice)||parseFloat(newPos.buyPrice)<=0) { setPosError("Syötä kelvollinen hinta."); return; }
+    if (!newPos.buyPrice||isNaN(newPos.buyPrice)||parseFloat(newPos.buyPrice)<=0) { setPosError("Syötä kelvollinen hinta (euroina)."); return; }
     setPortfolio(prev=>[...prev,{
       symbol: newPos.symbol.toUpperCase().trim(),
       name:   newPos.name.trim(),
@@ -252,16 +272,12 @@ function App() {
   }
 
   const cc = p => parseFloat(p)>0?"#00d4aa":parseFloat(p)<0?"#ff5566":"#9fb3c5";
-  const sym = "€"; // Aina euroina
-  // Muunna kurssidata euroiksi (kurssit voivat olla USD, SEK, jne.)
-  function convPrice(priceStr, stockCurrency) {
-    const p = parseFloat(priceStr);
-    if (!stockCurrency || stockCurrency === "EUR") return p.toFixed(2);
-    if (stockCurrency === "USD") return (p * eurUsd).toFixed(2);
-    if (stockCurrency === "SEK") return (p * 0.088).toFixed(2); // SEK→EUR
-    return p.toFixed(2);
+
+  // Muunna kurssidata euroiksi käyttäen dynaamisia kursseja
+  function priceToEur(priceStr, currency) {
+    const eur = toEur(priceStr, currency, rates);
+    return eur !== null ? eur.toFixed(2) : "—";
   }
-  const cp = s => convPrice(s, "USD"); // Ticker-palkki olettaa USD
 
   function fmt(text) {
     return text.split("\n").map((line,i)=>{
@@ -272,12 +288,13 @@ function App() {
     });
   }
 
+  // Salkun yhteenvetolaskelmat — kaikki euroina
   const ti = portfolio.reduce((s,p)=>s+p.buyPrice*p.shares,0);
   const tn = portfolio.reduce((s,p)=>{
     const st=stocks.find(x=>x.symbol===p.symbol);
     if (!st?.data?.price) return s + p.buyPrice*p.shares;
-    const priceEur = parseFloat(convPrice(st.data.price, st.data.currency));
-    return s + priceEur*p.shares;
+    const eurPrice = toEur(st.data.price, st.data.currency, rates);
+    return s + (eurPrice || p.buyPrice)*p.shares;
   },0);
   const tg = tn-ti;
   const tp = ti>0?(tg/ti*100):0;
@@ -327,14 +344,14 @@ function App() {
         </div>
       </div>
 
-      {/* TICKER */}
+      {/* TICKER — käyttää oikeaa valuuttaa jokaiselle osakkeelle */}
       <div style={{background:"#070b12",borderBottom:"1px solid #00d4aa0d",padding:"6px 16px",overflowX:"auto",flexShrink:0}}>
         <div style={{display:"flex",gap:16}}>
           {stocks.map(s=>(
             <div key={s.symbol} style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
               <span style={{fontSize:10,color:"#b0c4d4"}}>{s.symbol}</span>
               {s.data
-                ? <><span style={{fontSize:12,fontWeight:600,color:"#fff"}}>{sym}{cp(s.data.price)}</span>
+                ? <><span style={{fontSize:12,fontWeight:600,color:"#fff"}}>€{priceToEur(s.data.price, s.data.currency)}</span>
                      <span style={{fontSize:10,color:cc(s.data.changePct),fontWeight:600}}>{parseFloat(s.data.changePct)>=0?"▲":"▼"}{Math.abs(s.data.changePct)}%</span></>
                 : <span style={{fontSize:10,color:"#5a7a8a"}}>{loadingMarket?"…":"—"}</span>
               }
@@ -345,7 +362,7 @@ function App() {
 
       {/* ══ CHAT TAB ══ */}
       {tab==="chat" && <>
-        {/* Kurssikortit – vaakasuora scrollattava rivi */}
+        {/* Kurssikortit — oikea valuuttamuunnos */}
         <div style={{padding:"8px 16px 0",flexShrink:0,overflowX:"auto"}}>
           <div style={{display:"flex",gap:7,minWidth:"max-content"}}>
             {stocks.filter(s=>s.data).map(s=>(
@@ -358,7 +375,7 @@ function App() {
                     {parseFloat(s.data.changePct)>=0?"+":""}{s.data.changePct}%
                   </span>
                 </div>
-                <div style={{fontSize:15,fontWeight:700,color:"#fff",fontFamily:"'Syne',sans-serif"}}>{sym}{cp(s.data.price)}</div>
+                <div style={{fontSize:15,fontWeight:700,color:"#fff",fontFamily:"'Syne',sans-serif"}}>€{priceToEur(s.data.price, s.data.currency)}</div>
               </div>
             ))}
           </div>
@@ -444,6 +461,17 @@ function App() {
                   </div>
                 ))}
               </div>
+
+              {/* Valuuttakurssit */}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
+                <div style={{padding:"5px 10px",background:"#070b12",border:"1px solid #00d4aa15",borderRadius:6,fontSize:10,color:"#9ab0c0"}}>
+                  💱 1 USD = {rates.eurUsd.toFixed(4)} €
+                </div>
+                <div style={{padding:"5px 10px",background:"#070b12",border:"1px solid #00d4aa15",borderRadius:6,fontSize:10,color:"#9ab0c0"}}>
+                  💱 1 SEK = {rates.sekEur.toFixed(4)} €
+                </div>
+              </div>
+
               <div style={{marginTop:12,padding:"8px 12px",background:"#070b12",border:"1px solid #00d4aa15",borderRadius:7,fontSize:11,color:"#9ab0c0"}}>
                 📱 AI-analyysi tulee automaattisesti Telegramiin tunnin välein!
               </div>
@@ -454,8 +482,8 @@ function App() {
             <div style={{marginBottom:14}}>
               {portfolio.map((p,i)=>{
                 const st = stocks.find(s=>s.symbol===p.symbol);
-                const priceEur = st?.data?.price ? parseFloat(convPrice(st.data.price, st.data.currency)) : null;
-                const inv = p.buyPrice*p.shares; // euroina
+                const priceEur = st?.data?.price ? toEur(st.data.price, st.data.currency, rates) : null;
+                const inv = p.buyPrice*p.shares;
                 const now = priceEur ? priceEur*p.shares : null;
                 const gE = now ? now-inv : null;
                 const gP = gE ? (gE/inv*100) : null;
@@ -463,11 +491,11 @@ function App() {
                   <div key={i} style={{background:"#0a0f1a",border:"1px solid #2a3d4e",borderRadius:9,padding:"11px 13px",marginBottom:7,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                     <div style={{flex:1,minWidth:100}}>
                       <div style={{fontWeight:600,color:"#e8f0f8",fontSize:13}}>{p.name}</div>
-                      <div style={{fontSize:10,color:"#aac4d4"}}>{p.symbol} · {p.shares}kpl · hankinta {sym}{p.buyPrice.toFixed(2)}</div>
+                      <div style={{fontSize:10,color:"#aac4d4"}}>{p.symbol} · {p.shares}kpl · hankinta €{p.buyPrice.toFixed(2)}</div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:13,color:"#e8f0f8",fontWeight:600}}>{now?`${sym}${now.toFixed(2)}`:"—"}</div>
-                      {gE!==null && <div style={{fontSize:11,color:cc(gE),fontWeight:700}}>{gE>=0?"+":"-"}{sym}{Math.abs(gE).toFixed(2)} ({gP>=0?"+":""}{gP.toFixed(1)}%)</div>}
+                      <div style={{fontSize:13,color:"#e8f0f8",fontWeight:600}}>{now?`€${now.toFixed(2)}`:"—"}</div>
+                      {gE!==null && <div style={{fontSize:11,color:cc(gE),fontWeight:700}}>{gE>=0?"+":"-"}€{Math.abs(gE).toFixed(2)} ({gP>=0?"+":""}{gP.toFixed(1)}%)</div>}
                     </div>
                     <button onClick={()=>setPortfolio(prev=>prev.filter((_,idx)=>idx!==i))}
                       style={{background:"transparent",border:"1px solid #3a1a1a",borderRadius:5,padding:"3px 8px",color:"#774444",fontSize:11,fontFamily:"inherit"}}>✕</button>
@@ -478,15 +506,15 @@ function App() {
           )}
 
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"14px"}}>
-            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>+ Lisää positio</div>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>+ Lisää positio (hinnat euroina)</div>
             <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:8}}>
               <div style={{display:"flex",gap:7}}>
-                <Field ph="Ticker (AAPL)" val={newPos.symbol} k="symbol"/>
-                <Field ph="Nimi (Apple)" val={newPos.name} k="name"/>
+                <Field ph="Ticker (LUG.ST)" val={newPos.symbol} k="symbol"/>
+                <Field ph="Nimi (Lundin Gold)" val={newPos.name} k="name"/>
               </div>
               <div style={{display:"flex",gap:7}}>
                 <Field ph="Kpl (esim. 10)" val={newPos.shares} k="shares" type="number"/>
-                <Field ph={`Hinta ${sym}/kpl`} val={newPos.buyPrice} k="buyPrice" type="number"/>
+                <Field ph="Hinta €/kpl" val={newPos.buyPrice} k="buyPrice" type="number"/>
               </div>
             </div>
             {posError && <div style={{fontSize:11,color:"#ff5566",marginBottom:7}}>⚠️ {posError}</div>}
@@ -505,7 +533,7 @@ function App() {
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>☁️ Cloudflare Worker -osoite</div>
             <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
-              Tarvitaan AI-chat ja uutisiin. Syötä Worker-osoite tähän.
+              Tarvitaan kursseihin, AI-chattiin ja uutisiin. Worker hakee kurssit Yahoo Financesta ja välittää API-kutsut Claudelle.
             </p>
             <div style={{display:"flex",gap:7}}>
               <input value={cfUrlInput||""} onChange={e=>setCfUrlInput(e.target.value)} placeholder="https://sijoitusai.sinunnimesi.workers.dev"
@@ -515,13 +543,13 @@ function App() {
                 Tallenna
               </button>
             </div>
-            {cfUrl && cfUrl !== "CLOUDFLARE_WORKER_URL_TAHAN" && <div style={{marginTop:8,fontSize:11,color:"#00d4aa"}}>✓ Worker-osoite tallennettu</div>}
+            {cfUrl && <div style={{marginTop:8,fontSize:11,color:"#00d4aa"}}>✓ Worker-osoite tallennettu</div>}
           </div>
 
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🤖 Anthropic API-avain (Claude)</div>
             <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
-              Tarvitaan AI-analyysiin: <a href="https://console.anthropic.com" target="_blank" style={{color:"#00d4aa"}}>console.anthropic.com</a>
+              Tarvitaan AI-analyysiin ja uutishakuun: <a href="https://console.anthropic.com" target="_blank" style={{color:"#00d4aa"}}>console.anthropic.com</a>
               <br/><span style={{color:"#7a9aaa"}}>API Keys → Create Key</span>
             </p>
             <div style={{display:"flex",gap:7}}>
@@ -537,25 +565,6 @@ function App() {
           </div>
 
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px",marginBottom:12}}>
-            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🔑 Alpha Vantage API-avain</div>
-            <p style={{fontSize:11,color:"#aac4d4",marginBottom:10,lineHeight:1.6}}>
-              Ilmainen: <a href="https://www.alphavantage.co/support/#api-key" target="_blank" style={{color:"#00d4aa"}}>alphavantage.co</a>
-              <br/><span style={{color:"#7a9aaa"}}>Demo-avaimella toimii vain MSFT.</span>
-            </p>
-            <div style={{display:"flex",gap:7}}>
-              <input value={avKeyInput} onChange={e=>setAvKeyInput(e.target.value)} placeholder="API-avain…"
-                style={{flex:1,background:"#050810",border:"1px solid #2a4050",borderRadius:7,padding:"7px 12px",color:"#e8f0f8",fontFamily:"inherit",fontSize:12}}/>
-              <button onClick={()=>{lsSet("sijoitus_avkey",avKeyInput);setAvKey(avKeyInput);refreshAll(avKeyInput);}}
-                style={{background:"linear-gradient(135deg,#00d4aa,#0099bb)",border:"none",borderRadius:7,padding:"7px 14px",color:"#050810",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
-                Tallenna
-              </button>
-            </div>
-            <div style={{marginTop:10,padding:"8px 12px",background:"#070b12",border:"1px solid #2a3d4e",borderRadius:7,fontSize:11,color:"#aac4d4"}}>
-              💱 EUR/USD: <span style={{color:"#00d4aa",fontWeight:700}}>1 USD = {eurUsd.toFixed(4)} €</span>
-            </div>
-          </div>
-
-          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px"}}>
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>🏦 Nordnet-taso</div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {[{level:1,label:"Taso 1 – >50 kauppaa/kk",fee:"0,06% / min 3€"},
@@ -576,6 +585,22 @@ function App() {
                   {nordnet.level===t.level && <span style={{fontSize:10,color:"#00d4aa"}}>✓</span>}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Valuuttakurssit info */}
+          <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px"}}>
+            <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>💱 Valuuttakurssit (haetaan automaattisesti)</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <div style={{padding:"8px 12px",background:"#070b12",border:"1px solid #2a3d4e",borderRadius:7,fontSize:12,color:"#aac4d4",display:"flex",justifyContent:"space-between"}}>
+                <span>EUR/USD</span>
+                <span style={{color:"#00d4aa",fontWeight:700}}>1 USD = {rates.eurUsd.toFixed(4)} €</span>
+              </div>
+              <div style={{padding:"8px 12px",background:"#070b12",border:"1px solid #2a3d4e",borderRadius:7,fontSize:12,color:"#aac4d4",display:"flex",justifyContent:"space-between"}}>
+                <span>SEK/EUR</span>
+                <span style={{color:"#00d4aa",fontWeight:700}}>1 SEK = {rates.sekEur.toFixed(4)} €</span>
+              </div>
+              <p style={{fontSize:10,color:"#7a9aaa",marginTop:4}}>Kurssit päivittyvät automaattisesti Yahoo Financen kautta aina kun painat ⟳.</p>
             </div>
           </div>
         </div>
