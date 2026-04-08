@@ -55,13 +55,13 @@ const { useState, useRef, useEffect } = React;
 const DEFAULT_AV_KEY = "demo";
 
 const MARKET_SYMBOLS = [
-  { symbol: "AAPL",     name: "Apple",        sector: "Teknologia" },
-  { symbol: "MSFT",     name: "Microsoft",    sector: "Teknologia" },
-  { symbol: "SPY",      name: "S&P 500 ETF",  sector: "ETF"        },
-  { symbol: "LUG.TO",   name: "Lundin Gold",  sector: "Kaivos"     },
-  { symbol: "MEKKO.HE", name: "Marimekko",    sector: "Helsinki"   },
-  { symbol: "FIA1S.HE", name: "Finnair",      sector: "Helsinki"   },
-  { symbol: "LYSX.DE",  name: "Euro Stoxx 50",sector: "ETF"        },
+  { symbol: "AAPL",     name: "Apple",         sector: "Teknologia" },
+  { symbol: "MSFT",     name: "Microsoft",     sector: "Teknologia" },
+  { symbol: "SPY",      name: "S&P 500 ETF",   sector: "ETF"        },
+  { symbol: "LUG.ST",   name: "Lundin Gold",   sector: "Kaivos"     },
+  { symbol: "MEKKO.HE", name: "Marimekko",     sector: "Helsinki"   },
+  { symbol: "FIA1S.HE", name: "Finnair",       sector: "Helsinki"   },
+  { symbol: "LYSX.DE",  name: "Euro Stoxx 50", sector: "ETF"        },
 ];
 
 // ─── LOCALSTORAGE ──────────────────────────────────────────────
@@ -69,31 +69,27 @@ function lsGet(key, fb) { try { const v = localStorage.getItem(key); return v ? 
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
 // ─── DATA FETCH ────────────────────────────────────────────────
-async function fetchEurUsd(apiKey) {
+async function fetchEurUsd(workerUrl) {
   try {
-    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent("https://query2.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=1d")}`;
-    const r = await fetch(url);
-    const parsed = await r.json();
-    const rate = parsed?.chart?.result?.[0]?.meta?.regularMarketPrice;
-    return rate ? parseFloat(rate) : 0.92;
+    if (!workerUrl) return 0.92;
+    const r = await fetch(`${workerUrl}?symbol=EURUSD=X`);
+    const d = await r.json();
+    return d.price ? parseFloat(d.price) : 0.92;
   } catch { return 0.92; }
 }
 
-async function fetchQuote(symbol) {
+async function fetchQuote(symbol, workerUrl) {
+  if (!workerUrl) return null;
   try {
-    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`)}`;
-    const r = await fetch(url);
-    const parsed = await r.json();
-    const meta = parsed?.chart?.result?.[0]?.meta;
-    if (!meta?.regularMarketPrice) return null;
-    const price = meta.regularMarketPrice;
-    const prev = meta.chartPreviousClose || meta.previousClose || price;
-    const changePct = prev && prev !== price ? (((price - prev) / prev) * 100).toFixed(2) : "0.00";
+    const r = await fetch(`${workerUrl}?symbol=${symbol}`);
+    const d = await r.json();
+    if (!d.price) return null;
     return {
-      price:     price.toFixed(2),
-      changePct: changePct,
-      high:      (meta.regularMarketDayHigh || price).toFixed(2),
-      low:       (meta.regularMarketDayLow  || price).toFixed(2),
+      price:     d.price,
+      changePct: d.changePct,
+      high:      d.high,
+      low:       d.low,
+      currency:  d.currency || "USD",
     };
   } catch { return null; }
 }
@@ -197,9 +193,10 @@ function App() {
   async function refreshAll(key) {
     const k = key||avKey;
     setLM(true); setLN(true);
+    const workerUrl = cfUrl || lsGet("sijoitus_cfurl","");
     const [quotes,rate] = await Promise.all([
-      Promise.all(MARKET_SYMBOLS.map(s=>fetchQuote(s.symbol,k))),
-      fetchEurUsd(k),
+      Promise.all(MARKET_SYMBOLS.map(s=>fetchQuote(s.symbol, workerUrl))),
+      fetchEurUsd(workerUrl),
     ]);
     setEurUsd(rate);
     setStocks(MARKET_SYMBOLS.map((s,i)=>({...s,data:quotes[i]})));
