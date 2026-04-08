@@ -13,10 +13,10 @@ ALPHA_VANTAGE_KEY = "L7RKV8GVN2HAGGKF"
 
 # Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
 OMAT_OMISTUKSET = [
-    {"symbol": "LUG",   "name": "Lundin Gold",         "kpl": 27, "hinta_eur": 58.87},
-    {"symbol": "LYSX",  "name": "Amundi Euro Stoxx 50", "kpl": 1,  "hinta_eur": 58.05},
-    {"symbol": "MEKKO", "name": "Marimekko",            "kpl": 1,  "hinta_eur": 11.40},
-    {"symbol": "FIA1S", "name": "Finnair",              "kpl": 4,  "hinta_eur": 3.00},
+    {"symbol": "LUG.TO",  "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
+    {"symbol": "LYSX.DE", "name": "Amundi Euro Stoxx 50",  "kpl": 1,  "hinta_eur": 58.05},
+    {"symbol": "MEKKO.HE","name": "Marimekko",             "kpl": 1,  "hinta_eur": 11.40},
+    {"symbol": "FIA1S.HE","name": "Finnair",               "kpl": 4,  "hinta_eur": 3.00},
 ]
 
 # Yleisesti seurattavat markkinat
