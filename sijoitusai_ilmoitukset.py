@@ -9,14 +9,13 @@ from datetime import datetime
 # --- ASETUKSET ---
 TELEGRAM_TOKEN   = "8627280901:AAFSIOdXl53aEKkGwl8fCj6IEuivy_gKIDA"
 TELEGRAM_CHAT_ID = "8780106046"
-ALPHA_VANTAGE_KEY = "L7RKV8GVN2HAGGKF"
 
 # Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
 OMAT_OMISTUKSET = [
-    {"symbol": "LUG.TO",  "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
-    {"symbol": "LYSX.DE", "name": "Amundi Euro Stoxx 50",  "kpl": 1,  "hinta_eur": 58.05},
-    {"symbol": "MEKKO.HE","name": "Marimekko",             "kpl": 1,  "hinta_eur": 11.40},
-    {"symbol": "FIA1S.HE","name": "Finnair",               "kpl": 4,  "hinta_eur": 3.00},
+    {"symbol": "LUG.TO",   "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
+    {"symbol": "LYSX.DE",  "name": "Amundi Euro Stoxx 50",  "kpl": 1,  "hinta_eur": 58.05},
+    {"symbol": "MEKKO.HE", "name": "Marimekko",             "kpl": 1,  "hinta_eur": 11.40},
+    {"symbol": "FIA1S.HE", "name": "Finnair",               "kpl": 4,  "hinta_eur": 3.00},
 ]
 
 # Yleisesti seurattavat markkinat
@@ -46,20 +45,22 @@ def laheta_viesti(teksti):
     except Exception as e:
         print(f"VIRHE: {e}")
 
-# --- KURSSIHAKU ---
+# --- KURSSIHAKU (Yahoo Finance - toimii kaikille pörsseille) ---
 def hae_kurssi(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_KEY}"
     try:
-        r = requests.get(url, timeout=10)
-        q = r.json().get("Global Quote", {})
-        hinta = q.get("05. price")
-        if not hinta:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, timeout=10, headers=headers)
+        parsed = r.json()
+        meta = parsed.get("chart", {}).get("result", [{}])[0].get("meta", {})
+        price = meta.get("regularMarketPrice")
+        if not price:
             return None
-        muutos_str = q.get("10. change percent", "0%")
-        muutos = float(muutos_str.replace("%", "").strip())
+        prev = meta.get("chartPreviousClose") or meta.get("previousClose") or price
+        muutos = ((price - prev) / prev * 100) if prev else 0
         return {
-            "hinta":  float(hinta),
-            "muutos": muutos,
+            "hinta":  round(float(price), 2),
+            "muutos": round(float(muutos), 2),
         }
     except Exception as e:
         print(f"Virhe haussa {symbol}: {e}")
@@ -142,7 +143,7 @@ def main():
             salkku_rivit.append(f"  {o['name']} ({o['symbol']}): ei kurssidataa")
             print(f"  {o['symbol']}: ei dataa")
 
-        time.sleep(13)
+        time.sleep(1)  # Pieni tauko pyyntöjen välillä
 
     # Hae markkinatilanne
     markkinat_rivit = []
@@ -154,7 +155,7 @@ def main():
             markkinat_rivit.append(f"  {s['name']}: {data['hinta']:.2f} ({data['muutos']:+.2f}%)")
         else:
             print(f"  {s['symbol']}: ei dataa")
-        time.sleep(13)
+        time.sleep(1)  # Pieni tauko pyyntöjen välillä
 
     # Laske salkun kokonaistuotto
     kokonaistuotto = arvo_yhteensa - sijoitettu_yhteensa
