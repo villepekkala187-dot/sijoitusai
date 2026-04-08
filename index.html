@@ -55,12 +55,13 @@ const { useState, useRef, useEffect } = React;
 const DEFAULT_AV_KEY = "demo";
 
 const MARKET_SYMBOLS = [
-  { symbol: "AAPL", name: "Apple",       sector: "Teknologia" },
-  { symbol: "MSFT", name: "Microsoft",   sector: "Teknologia" },
-  { symbol: "NVDA", name: "NVIDIA",      sector: "Teknologia" },
-  { symbol: "TSLA", name: "Tesla",       sector: "Auto"       },
-  { symbol: "SPY",  name: "S&P 500 ETF", sector: "ETF"        },
-  { symbol: "GLD",  name: "Kulta ETF",   sector: "Hyödyke"    },
+  { symbol: "AAPL",     name: "Apple",        sector: "Teknologia" },
+  { symbol: "MSFT",     name: "Microsoft",    sector: "Teknologia" },
+  { symbol: "SPY",      name: "S&P 500 ETF",  sector: "ETF"        },
+  { symbol: "LUG.TO",   name: "Lundin Gold",  sector: "Kaivos"     },
+  { symbol: "MEKKO.HE", name: "Marimekko",    sector: "Helsinki"   },
+  { symbol: "FIA1S.HE", name: "Finnair",      sector: "Helsinki"   },
+  { symbol: "LYSX.DE",  name: "Euro Stoxx 50",sector: "ETF"        },
 ];
 
 // ─── LOCALSTORAGE ──────────────────────────────────────────────
@@ -70,24 +71,29 @@ function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val));
 // ─── DATA FETCH ────────────────────────────────────────────────
 async function fetchEurUsd(apiKey) {
   try {
-    const r = await fetch(`https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=EUR&apikey=${apiKey}`);
-    const d = await r.json();
-    const rate = d?.["Realtime Currency Exchange Rate"]?.["5. Exchange Rate"];
+    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent("https://query2.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=1d")}`;
+    const r = await fetch(url);
+    const parsed = await r.json();
+    const rate = parsed?.chart?.result?.[0]?.meta?.regularMarketPrice;
     return rate ? parseFloat(rate) : 0.92;
   } catch { return 0.92; }
 }
 
-async function fetchQuote(symbol, apiKey) {
+async function fetchQuote(symbol) {
   try {
-    const r = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`);
-    const d = await r.json();
-    const q = d["Global Quote"];
-    if (!q || !q["05. price"]) return null;
+    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`)}`;
+    const r = await fetch(url);
+    const parsed = await r.json();
+    const meta = parsed?.chart?.result?.[0]?.meta;
+    if (!meta?.regularMarketPrice) return null;
+    const price = meta.regularMarketPrice;
+    const prev = meta.chartPreviousClose || meta.previousClose || price;
+    const changePct = prev && prev !== price ? (((price - prev) / prev) * 100).toFixed(2) : "0.00";
     return {
-      price:     parseFloat(q["05. price"]).toFixed(2),
-      changePct: parseFloat(q["09. % change"]).toFixed(2),
-      high:      parseFloat(q["03. high"]).toFixed(2),
-      low:       parseFloat(q["04. low"]).toFixed(2),
+      price:     price.toFixed(2),
+      changePct: changePct,
+      high:      (meta.regularMarketDayHigh || price).toFixed(2),
+      low:       (meta.regularMarketDayLow  || price).toFixed(2),
     };
   } catch { return null; }
 }
