@@ -336,45 +336,24 @@ function App() {
 
       {/* ══ CHAT TAB ══ */}
       {tab==="chat" && <>
-        {/* Kurssikortit */}
-        <div style={{padding:"10px 16px 0",flexShrink:0}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:7}}>
+        {/* Kurssikortit – vaakasuora scrollattava rivi */}
+        <div style={{padding:"8px 16px 0",flexShrink:0,overflowX:"auto"}}>
+          <div style={{display:"flex",gap:7,minWidth:"max-content"}}>
             {stocks.filter(s=>s.data).map(s=>(
               <div key={s.symbol} className="card"
-                onClick={()=>sendMessage(`Analysoi ${s.name} tilanne nyt – mitä uutiset ja kurssi kertovat?`)}
-                style={{background:"#0a0f1a",border:"1px solid #00d4aa1a",borderRadius:9,padding:"10px 12px",cursor:"pointer",transition:"all .2s"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <div>
-                    <div style={{fontSize:10,color:"#7a8fa3"}}>{s.symbol}</div>
-                    <div style={{fontSize:11,color:"#b0c4d4"}}>{s.name}</div>
-                  </div>
-                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:parseFloat(s.data.changePct)>=0?"#00d4aa12":"#ff556612",color:cc(s.data.changePct),fontWeight:700}}>
+                onClick={()=>sendMessage(`Analysoi ${s.name} tilanne nyt`)}
+                style={{background:"#0a0f1a",border:"1px solid #00d4aa1a",borderRadius:9,padding:"8px 12px",cursor:"pointer",transition:"all .2s",minWidth:110}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                  <span style={{fontSize:10,color:"#7a8fa3"}}>{s.symbol}</span>
+                  <span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:parseFloat(s.data.changePct)>=0?"#00d4aa12":"#ff556612",color:cc(s.data.changePct),fontWeight:700}}>
                     {parseFloat(s.data.changePct)>=0?"+":""}{s.data.changePct}%
                   </span>
                 </div>
-                <div style={{fontSize:17,fontWeight:700,color:"#fff",fontFamily:"'Syne',sans-serif"}}>{sym}{cp(s.data.price)}</div>
+                <div style={{fontSize:15,fontWeight:700,color:"#fff",fontFamily:"'Syne',sans-serif"}}>{sym}{cp(s.data.price)}</div>
               </div>
             ))}
           </div>
         </div>
-
-        {/* Uutiset */}
-        {news.length>0 && (
-          <div style={{padding:"8px 16px 0",flexShrink:0}}>
-            <div style={{background:"#070b12",border:"1px solid #00d4aa15",borderRadius:9,padding:"9px 12px"}}>
-              <div style={{fontSize:9,color:"#9ab0c0",marginBottom:6,letterSpacing:"0.08em",textTransform:"uppercase"}}>🌍 Päivän uutiset</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                {news.map((n,i)=>(
-                  <span key={i} className="chip"
-                    onClick={()=>sendMessage(`Miten tämä uutinen vaikuttaa markkinoihin ja salkkuuni: "${n}"`)}
-                    style={{fontSize:10,color:"#bdd0df",border:"1px solid #2a4050",borderRadius:16,padding:"3px 10px",cursor:"pointer",transition:"all .2s"}}>
-                    {n}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Viestit */}
         <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
