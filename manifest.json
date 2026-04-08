@@ -2,7 +2,7 @@
   "name": "SijoitusAI",
   "short_name": "SijoitusAI",
   "description": "Reaaliaikainen sijoitusneuvoija-tekoäly",
-  "start_url": "/index.html",
+  "start_url": "/sijoitusai/",
   "display": "standalone",
   "background_color": "#050810",
   "theme_color": "#050810",
