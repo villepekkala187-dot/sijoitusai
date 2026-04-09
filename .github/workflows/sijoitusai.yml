@@ -8,11 +8,14 @@ on:
 jobs:
   tarkista:
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests schedule
+      - run: pip install requests
       - run: python sijoitusai_ilmoitukset.py
         timeout-minutes: 10
