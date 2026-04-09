@@ -3,11 +3,14 @@ SijoitusAI - Automaattiset Telegram-ilmoitukset
 Ajettava GitHub Actionsilla tunnin valein.
 """
 
+import os
+import time
 import requests
 from datetime import datetime
 
 # --- ASETUKSET ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 TELEGRAM_CHAT_ID = "8780106046"
 
 # Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
@@ -31,7 +34,7 @@ NOUSU_RAJA =  3.0
 
 # --- TELEGRAM ---
 def laheta_viesti(teksti):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         r = requests.post(url, json={
             "chat_id": TELEGRAM_CHAT_ID,
@@ -68,10 +71,17 @@ def hae_kurssi(symbol):
 
 # --- CLAUDE ANALYYSI ---
 def hae_analyysi(salkku_teksti, markkinat_teksti):
+    if not ANTHROPIC_API_KEY:
+        print("ANTHROPIC_API_KEY puuttuu, ohitetaan analyysi")
+        return ""
     try:
         res = requests.post(
             "https://api.anthropic.com/v1/messages",
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
             json={
                 "model": "claude-sonnet-4-20250514",
                 "max_tokens": 800,
@@ -101,10 +111,13 @@ def hae_analyysi(salkku_teksti, markkinat_teksti):
 
 # --- PAAOHJELMA ---
 def main():
+    # Tarkista että Telegram-token on asetettu
+    if not TELEGRAM_BOT_TOKEN:
+        print("VIRHE: TELEGRAM_BOT_TOKEN puuttuu! Lisää se GitHub Secretsiin.")
+        return
+
     nyt = datetime.now().strftime("%d.%m.%Y %H:%M")
     print(f"Tarkistetaan markkinat... {nyt}")
-
-    import time
 
     # Hae omat omistukset
     salkku_rivit = []
@@ -143,7 +156,7 @@ def main():
             salkku_rivit.append(f"  {o['name']} ({o['symbol']}): ei kurssidataa")
             print(f"  {o['symbol']}: ei dataa")
 
-        time.sleep(1)  # Pieni tauko pyyntöjen välillä
+        time.sleep(1)
 
     # Hae markkinatilanne
     markkinat_rivit = []
@@ -155,7 +168,7 @@ def main():
             markkinat_rivit.append(f"  {s['name']}: {data['hinta']:.2f} ({data['muutos']:+.2f}%)")
         else:
             print(f"  {s['symbol']}: ei dataa")
-        time.sleep(1)  # Pieni tauko pyyntöjen välillä
+        time.sleep(1)
 
     # Laske salkun kokonaistuotto
     kokonaistuotto = arvo_yhteensa - sijoitettu_yhteensa
@@ -189,3 +202,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
