@@ -15,7 +15,7 @@ TELEGRAM_CHAT_ID = "8780106046"
 
 # Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
 OMAT_OMISTUKSET = [
-    {"symbol": "LUG.TO",   "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
+    {"symbol": "LUG.ST",   "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
     {"symbol": "LYSX.DE",  "name": "Amundi Euro Stoxx 50",  "kpl": 1,  "hinta_eur": 58.05},
     {"symbol": "MEKKO.HE", "name": "Marimekko",             "kpl": 1,  "hinta_eur": 11.40},
     {"symbol": "FIA1S.HE", "name": "Finnair",               "kpl": 4,  "hinta_eur": 3.00},
@@ -48,6 +48,41 @@ def laheta_viesti(teksti):
     except Exception as e:
         print(f"VIRHE: {e}")
 
+# --- VALUUTTAKURSSIT ---
+def hae_valuuttakurssit():
+    """Hae EUR/USD ja SEK/EUR kurssit Yahoo Financesta."""
+    kurssit = {"USD": 1.0, "EUR": 1.0, "SEK": 1.0, "CAD": 1.0, "GBP": 1.0}
+    parit = [
+        ("EURUSD=X", "USD"),   # 1 USD = X EUR
+        ("SEKEUR=X", "SEK"),   # 1 SEK = X EUR
+        ("CADEUR=X", "CAD"),   # 1 CAD = X EUR
+        ("GBPEUR=X", "GBP"),   # 1 GBP = X EUR
+    ]
+    for symboli, valuutta in parit:
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symboli}?interval=1d&range=1d"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            r = requests.get(url, timeout=10, headers=headers)
+            parsed = r.json()
+            meta = parsed.get("chart", {}).get("result", [{}])[0].get("meta", {})
+            price = meta.get("regularMarketPrice")
+            if price:
+                kurssit[valuutta] = round(float(price), 6)
+                print(f"  Valuutta 1 {valuutta} = {kurssit[valuutta]} EUR")
+        except Exception as e:
+            print(f"  Valuuttavirhe {symboli}: {e}")
+        time.sleep(0.5)
+    return kurssit
+
+def muunna_euroiksi(hinta, valuutta, kurssit):
+    """Muunna hinta euroiksi."""
+    if valuutta == "EUR":
+        return hinta
+    kerroin = kurssit.get(valuutta)
+    if kerroin and kerroin != 1.0:
+        return hinta * kerroin
+    return hinta  # fallback: palauta sellaisenaan
+
 # --- KURSSIHAKU (Yahoo Finance - toimii kaikille pörsseille) ---
 def hae_kurssi(symbol):
     try:
@@ -61,9 +96,11 @@ def hae_kurssi(symbol):
             return None
         prev = meta.get("chartPreviousClose") or meta.get("previousClose") or price
         muutos = ((price - prev) / prev * 100) if prev else 0
+        valuutta = meta.get("currency", "USD")
         return {
             "hinta":  round(float(price), 2),
             "muutos": round(float(muutos), 2),
+            "valuutta": valuutta,
         }
     except Exception as e:
         print(f"Virhe haussa {symbol}: {e}")
@@ -164,6 +201,10 @@ def main():
     nyt = datetime.now().strftime("%d.%m.%Y %H:%M")
     print(f"Tarkistetaan markkinat... {nyt}")
 
+    # Hae valuuttakurssit ensin
+    print("\nValuuttakurssit:")
+    kurssit = hae_valuuttakurssit()
+
     # Hae omat omistukset
     salkku_rivit = []
     halytykset = []
@@ -177,18 +218,21 @@ def main():
         sijoitettu_yhteensa += sijoitettu
 
         if data:
-            nykyarvo = data["hinta"] * o["kpl"]
+            # Muunna kurssi euroiksi
+            hinta_eur = muunna_euroiksi(data["hinta"], data["valuutta"], kurssit)
+            nykyarvo = hinta_eur * o["kpl"]
             arvo_yhteensa += nykyarvo
             tuotto_eur = nykyarvo - sijoitettu
             tuotto_pct = (tuotto_eur / sijoitettu) * 100
             muutos = data["muutos"]
 
-            print(f"  {o['symbol']}: {data['hinta']:.2f}EUR ({muutos:+.2f}%)")
+            valuutta_info = f" ({data['valuutta']}→EUR)" if data["valuutta"] != "EUR" else ""
+            print(f"  {o['symbol']}: {data['hinta']:.2f} {data['valuutta']} = {hinta_eur:.2f}EUR ({muutos:+.2f}%)")
 
             salkku_rivit.append(
                 f"  {o['name']} ({o['symbol']}): {o['kpl']}kpl | "
                 f"Hankinta: {o['hinta_eur']:.2f}EUR | "
-                f"Nyt: {data['hinta']:.2f}EUR | "
+                f"Nyt: {hinta_eur:.2f}EUR{valuutta_info} | "
                 f"Tuotto: {tuotto_eur:+.2f}EUR ({tuotto_pct:+.1f}%)"
             )
 
