@@ -67,7 +67,6 @@ function lsGet(key, fb) { try { const v = localStorage.getItem(key); return v ? 
 function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
 
 // ─── VALUUTTAKURSSIT ───────────────────────────────────────────
-// Haetaan dynaamisesti EUR/USD ja SEK/EUR
 async function fetchRate(symbol, workerUrl, fallback) {
   try {
     if (!workerUrl) return fallback;
@@ -121,9 +120,8 @@ function toEur(price, currency, rates) {
   if (!currency || currency === "EUR") return p;
   if (currency === "USD") return p * rates.eurUsd;
   if (currency === "SEK") return p * rates.sekEur;
-  // GBP, DKK jne. — lisää tarvittaessa
   if (currency === "GBP") return p * (rates.gbpEur || 1.16);
-  return p; // tuntematon valuutta → oletetaan EUR
+  return p;
 }
 
 // ─── SYSTEM PROMPT ─────────────────────────────────────────────
@@ -173,6 +171,14 @@ const Dots = () => (
   </div>
 );
 
+// ─── FIELD (App:n ulkopuolella — ei luoda uudelleen joka renderissä) ──
+const Field = ({ph,val,onChange,type="text",onKeyDown}) => (
+  <input placeholder={ph} value={val} type={type}
+    onChange={onChange}
+    onKeyDown={onKeyDown}
+    style={{flex:1,minWidth:80,background:"#0a0f1a",border:"1px solid #2a4050",borderRadius:8,padding:"8px 10px",color:"#e8f0f8",fontFamily:"inherit",fontSize:13}}/>
+);
+
 // ─── APP ────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab]         = useState("chat");
@@ -190,7 +196,6 @@ function App() {
   const [newPos, setNewPos]         = useState({symbol:"",name:"",shares:"",buyPrice:""});
   const [posError, setPosError]     = useState("");
 
-  // Valuuttakurssit — haetaan dynaamisesti
   const [rates, setRates] = useState({ eurUsd: 0.92, sekEur: 0.088 });
 
   const [nordnet, setNordnet]       = useState(()=>lsGet("sijoitus_nordnet",{level:3}));
@@ -266,14 +271,13 @@ function App() {
       symbol: newPos.symbol.toUpperCase().trim(),
       name:   newPos.name.trim(),
       shares: parseFloat(newPos.shares),
-      buyPrice: parseFloat(newPos.buyPrice), // Tallennetaan aina euroina
+      buyPrice: parseFloat(newPos.buyPrice),
     }]);
     setNewPos({symbol:"",name:"",shares:"",buyPrice:""});
   }
 
   const cc = p => parseFloat(p)>0?"#00d4aa":parseFloat(p)<0?"#ff5566":"#9fb3c5";
 
-  // Muunna kurssidata euroiksi käyttäen dynaamisia kursseja
   function priceToEur(priceStr, currency) {
     const eur = toEur(priceStr, currency, rates);
     return eur !== null ? eur.toFixed(2) : "—";
@@ -288,7 +292,6 @@ function App() {
     });
   }
 
-  // Salkun yhteenvetolaskelmat — kaikki euroina
   const ti = portfolio.reduce((s,p)=>s+p.buyPrice*p.shares,0);
   const tn = portfolio.reduce((s,p)=>{
     const st=stocks.find(x=>x.symbol===p.symbol);
@@ -298,13 +301,6 @@ function App() {
   },0);
   const tg = tn-ti;
   const tp = ti>0?(tg/ti*100):0;
-
-  const Field = ({ph,val,k,type="text"}) => (
-    <input placeholder={ph} value={val} type={type}
-      onChange={e=>setNewPos(prev=>({...prev,[k]:e.target.value}))}
-      onKeyDown={e=>e.key==="Enter"&&addPosition()}
-      style={{flex:1,minWidth:80,background:"#0a0f1a",border:"1px solid #2a4050",borderRadius:8,padding:"8px 10px",color:"#e8f0f8",fontFamily:"inherit",fontSize:13}}/>
-  );
 
   // ── RENDER ──────────────────────────────────────────────────
   return (
@@ -329,7 +325,6 @@ function App() {
             </button>
           </div>
         </div>
-        {/* Tabs */}
         <div style={{display:"flex",gap:3}}>
           {[["chat","💬 Chat"],["portfolio","💼 Salkku"],["settings","⚙️"]].map(([id,label])=>(
             <button key={id} onClick={()=>setTab(id)} style={{
@@ -344,7 +339,7 @@ function App() {
         </div>
       </div>
 
-      {/* TICKER — käyttää oikeaa valuuttaa jokaiselle osakkeelle */}
+      {/* TICKER */}
       <div style={{background:"#070b12",borderBottom:"1px solid #00d4aa0d",padding:"6px 16px",overflowX:"auto",flexShrink:0}}>
         <div style={{display:"flex",gap:16}}>
           {stocks.map(s=>(
@@ -362,7 +357,6 @@ function App() {
 
       {/* ══ CHAT TAB ══ */}
       {tab==="chat" && <>
-        {/* Kurssikortit — oikea valuuttamuunnos */}
         <div style={{padding:"8px 16px 0",flexShrink:0,overflowX:"auto"}}>
           <div style={{display:"flex",gap:7,minWidth:"max-content"}}>
             {stocks.filter(s=>s.data).map(s=>(
@@ -381,7 +375,6 @@ function App() {
           </div>
         </div>
 
-        {/* Viestit */}
         <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
           {messages.length===0 && (
             <div style={{textAlign:"center",padding:"16px 0",animation:"up .5s ease"}}>
@@ -425,7 +418,6 @@ function App() {
           <div ref={bottomRef}/>
         </div>
 
-        {/* Input */}
         <div className="safe-bottom" style={{padding:"10px 16px",borderTop:"1px solid #00d4aa0d",background:"#080c14",flexShrink:0}}>
           <div style={{display:"flex",gap:7,alignItems:"flex-end",background:"#0a0f1a",border:"1px solid #00d4aa25",borderRadius:13,padding:"6px 6px 6px 13px"}}>
             <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)}
@@ -462,7 +454,6 @@ function App() {
                 ))}
               </div>
 
-              {/* Valuuttakurssit */}
               <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
                 <div style={{padding:"5px 10px",background:"#070b12",border:"1px solid #00d4aa15",borderRadius:6,fontSize:10,color:"#9ab0c0"}}>
                   💱 1 USD = {rates.eurUsd.toFixed(4)} €
@@ -509,12 +500,20 @@ function App() {
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>+ Lisää positio (hinnat euroina)</div>
             <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:8}}>
               <div style={{display:"flex",gap:7}}>
-                <Field ph="Ticker (LUG.ST)" val={newPos.symbol} k="symbol"/>
-                <Field ph="Nimi (Lundin Gold)" val={newPos.name} k="name"/>
+                <Field ph="Ticker (LUG.ST)" val={newPos.symbol} type="text"
+                  onChange={e=>setNewPos(prev=>({...prev,symbol:e.target.value}))}
+                  onKeyDown={e=>e.key==="Enter"&&addPosition()}/>
+                <Field ph="Nimi (Lundin Gold)" val={newPos.name} type="text"
+                  onChange={e=>setNewPos(prev=>({...prev,name:e.target.value}))}
+                  onKeyDown={e=>e.key==="Enter"&&addPosition()}/>
               </div>
               <div style={{display:"flex",gap:7}}>
-                <Field ph="Kpl (esim. 10)" val={newPos.shares} k="shares" type="number"/>
-                <Field ph="Hinta €/kpl" val={newPos.buyPrice} k="buyPrice" type="number"/>
+                <Field ph="Kpl (esim. 10)" val={newPos.shares} type="number"
+                  onChange={e=>setNewPos(prev=>({...prev,shares:e.target.value}))}
+                  onKeyDown={e=>e.key==="Enter"&&addPosition()}/>
+                <Field ph="Hinta €/kpl" val={newPos.buyPrice} type="number"
+                  onChange={e=>setNewPos(prev=>({...prev,buyPrice:e.target.value}))}
+                  onKeyDown={e=>e.key==="Enter"&&addPosition()}/>
               </div>
             </div>
             {posError && <div style={{fontSize:11,color:"#ff5566",marginBottom:7}}>⚠️ {posError}</div>}
@@ -588,7 +587,6 @@ function App() {
             </div>
           </div>
 
-          {/* Valuuttakurssit info */}
           <div style={{background:"#0a0f1a",border:"1px solid #00d4aa18",borderRadius:11,padding:"16px"}}>
             <div style={{fontSize:9,color:"#9ab0c0",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>💱 Valuuttakurssit (haetaan automaattisesti)</div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
