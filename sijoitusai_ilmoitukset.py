@@ -7,7 +7,7 @@ import requests
 from datetime import datetime
 
 # --- ASETUKSET ---
-TELEGRAM_TOKEN   = "8627280901:AAFSIOdXl53aEKkGwl8fCj6IEuivy_gKIDA"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = "8780106046"
 
 # Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
