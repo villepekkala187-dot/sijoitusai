@@ -109,6 +109,51 @@ def hae_analyysi(salkku_teksti, markkinat_teksti):
         print(f"Analyysivirhe: {e}")
         return ""
 
+# --- MARKKINAVAHTI (etsii osto/myyntimahdollisuuksia) ---
+def markkinavahti(salkku_teksti, markkinat_teksti):
+    """Claude analysoi web-haulla onko markkinoilla jotain poikkeavaa."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        res = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 600,
+                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                "messages": [{
+                    "role": "user",
+                    "content": (
+                        f"Olet markkinavahti. Hae tanaan ({datetime.now().strftime('%d.%m.%Y')}) "
+                        f"tuoreimmat talousuutiset web-haulla ja arvioi onko markkinoilla juuri nyt "
+                        f"jotain POIKKEUKSELLISTA joka vaatii sijoittajan huomiota.\n\n"
+                        f"KAYTTAJAN SALKKU:\n{salkku_teksti}\n\n"
+                        f"MARKKINATILANNE:\n{markkinat_teksti}\n\n"
+                        f"Arvioi tilanne ja vastaa TASMALLISESTI nain:\n"
+                        f"1. rivi: HALYTYS tai EI_HALYTYSTA (vain toinen naista)\n"
+                        f"2. rivi eteenpain: Jos HALYTYS, selita lyhyesti (max 3 lausetta) "
+                        f"mita tapahtui ja mita sijoittajan kannattaisi harkita.\n\n"
+                        f"Herkkyys: Halyta vain kun on oikeasti merkittava tapahtuma - "
+                        f"esim. yli 2% paivaliike indekseissa, yllattava keskuspankkipaatos, "
+                        f"geopoliittinen kriisi, merkittava yrityskauppa salkun osakkeisiin liittyen, "
+                        f"tai muu selkeasti poikkeuksellinen tilanne."
+                    )
+                }],
+            },
+            timeout=45,
+        )
+        data = res.json()
+        vastaus = "".join(b.get("text", "") for b in data.get("content", []))
+        return vastaus
+    except Exception as e:
+        print(f"Markkinavahti-virhe: {e}")
+        return None
+
 # --- PAAOHJELMA ---
 def main():
     # Tarkista että Telegram-token on asetettu
@@ -198,8 +243,25 @@ def main():
         viesti += f"<b>AI-analyysi:</b>\n{analyysi}"
 
     laheta_viesti(viesti)
+
+    # --- MARKKINAVAHTI ---
+    print("\nMarkkinavahti tarkistaa...")
+    vahti_vastaus = markkinavahti(salkku_teksti, markkinat_teksti)
+    if vahti_vastaus and "HALYTYS" in vahti_vastaus.upper().split("\n")[0]:
+        # Poista ensimmäinen rivi (HALYTYS) ja lähetä loput
+        rivit = vahti_vastaus.strip().split("\n")
+        halytys_teksti = "\n".join(rivit[1:]).strip() if len(rivit) > 1 else vahti_vastaus
+        vahti_viesti = (
+            f"🚨 <b>MARKKINAVAHTI — HUOMIO!</b>\n\n"
+            f"{halytys_teksti}\n\n"
+            f"<i>⚠️ Yleista analyysia, ei sijoitusneuvontaa.</i>"
+        )
+        laheta_viesti(vahti_viesti)
+        print("Markkinavahti: HALYTYS lahetetty!")
+    else:
+        print("Markkinavahti: ei halytettavaa.")
+
     print("\nValmis!")
 
 if __name__ == "__main__":
     main()
-    
