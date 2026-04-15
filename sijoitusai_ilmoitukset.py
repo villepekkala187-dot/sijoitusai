@@ -146,9 +146,9 @@ def hae_analyysi(salkku_teksti, markkinat_teksti):
         print(f"Analyysivirhe: {e}")
         return ""
 
-# --- MARKKINAVAHTI (etsii osto/myyntimahdollisuuksia) ---
+# --- MARKKINAVAHTI (aktiiviset osto/myyntivinkit) ---
 def markkinavahti(salkku_teksti, markkinat_teksti):
-    """Claude analysoi web-haulla onko markkinoilla jotain poikkeavaa."""
+    """Claude analysoi web-haulla ja antaa konkreettisia osto/myyntivinkkeja."""
     if not ANTHROPIC_API_KEY:
         return None
     try:
@@ -161,24 +161,27 @@ def markkinavahti(salkku_teksti, markkinat_teksti):
             },
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 600,
+                "max_tokens": 800,
                 "tools": [{"type": "web_search_20250305", "name": "web_search"}],
                 "messages": [{
                     "role": "user",
                     "content": (
-                        f"Olet markkinavahti. Hae tanaan ({datetime.now().strftime('%d.%m.%Y')}) "
-                        f"tuoreimmat talousuutiset web-haulla ja arvioi onko markkinoilla juuri nyt "
-                        f"jotain POIKKEUKSELLISTA joka vaatii sijoittajan huomiota.\n\n"
+                        f"Olet aktiivinen sijoitusvahti suomalaiselle piensijoittajalle (Nordnet, Taso 3 hinnoittelu). "
+                        f"Hae tanaan ({datetime.now().strftime('%d.%m.%Y')}) tuoreimmat talousuutiset web-haulla.\n\n"
                         f"KAYTTAJAN SALKKU:\n{salkku_teksti}\n\n"
                         f"MARKKINATILANNE:\n{markkinat_teksti}\n\n"
-                        f"Arvioi tilanne ja vastaa TASMALLISESTI nain:\n"
-                        f"1. rivi: HALYTYS tai EI_HALYTYSTA (vain toinen naista)\n"
-                        f"2. rivi eteenpain: Jos HALYTYS, selita lyhyesti (max 3 lausetta) "
-                        f"mita tapahtui ja mita sijoittajan kannattaisi harkita.\n\n"
-                        f"Herkkyys: Halyta vain kun on oikeasti merkittava tapahtuma - "
-                        f"esim. yli 2% paivaliike indekseissa, yllattava keskuspankkipaatos, "
-                        f"geopoliittinen kriisi, merkittava yrityskauppa salkun osakkeisiin liittyen, "
-                        f"tai muu selkeasti poikkeuksellinen tilanne."
+                        f"Tehtavasi:\n"
+                        f"1. Arvioi onko tanaan konkreettinen syy OSTAA, MYYDA tai PITAA jotain salkun osaketta\n"
+                        f"2. Etsi web-haulla onko olemassa kiinnostava osake/ETF/rahasto jota kannattaisi harkita\n"
+                        f"3. Huomioi Nordnet Taso 3 kulut (0.15% / min 7EUR) - pieni kauppa ei kannata\n\n"
+                        f"Vastaa TASMALLISESTI nain:\n"
+                        f"1. rivi: VINKKI tai EI_VINKKIA (vain toinen naista)\n"
+                        f"2. rivi eteenpain: Jos VINKKI, anna 1-2 konkreettista ehdotusta.\n"
+                        f"Kayta emojia: 🟢 osta, 🔴 myy, 🟡 pidä silmällä, 💎 pidä\n\n"
+                        f"Anna VINKKI aina kun on jotain mainitsemisen arvoista - ei tarvitse olla kriisi. "
+                        f"Esim. osake dipannut ilman syyta, sektori nousussa, uusi kiinnostava ETF, "
+                        f"kullan hinta liikkunut, tai salkun osakkeen tulosraportti tulossa.\n"
+                        f"Anna EI_VINKKIA vain jos paiva on taysin tapahtumakoyhä."
                     )
                 }],
             },
@@ -189,6 +192,56 @@ def markkinavahti(salkku_teksti, markkinat_teksti):
         return vastaus
     except Exception as e:
         print(f"Markkinavahti-virhe: {e}")
+        return None
+
+# --- VIIKKOANALYYSI (syvempi maanantaianalyysi) ---
+def viikkoanalyysi(salkku_teksti, markkinat_teksti):
+    """Laajempi viikkostrategia joka maanantai."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        res = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1500,
+                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                "messages": [{
+                    "role": "user",
+                    "content": (
+                        f"Olet huippuluokan sijoitusstrategi. Tanaan on maanantai {datetime.now().strftime('%d.%m.%Y')}. "
+                        f"Tee kattava VIIKKOANALYYSI suomalaiselle piensijoittajalle.\n\n"
+                        f"KAYTTAJAN SALKKU:\n{salkku_teksti}\n\n"
+                        f"MARKKINATILANNE:\n{markkinat_teksti}\n\n"
+                        f"Kayttaja sijoittaa Nordnetin kautta (Taso 3: 0.15% / min 7EUR). "
+                        f"Salkku on pieni (~1500-3000EUR) joten kulut vaikuttavat paljon.\n\n"
+                        f"HAE WEB-HAULLA ja analysoi:\n\n"
+                        f"1. VIIME VIIKON YHTEENVETO: Mita tapahtui markkinoilla? Miten salkun osakkeet paerjasivat?\n\n"
+                        f"2. TAMAN VIIKON NAKYMAT: Onko tulossa tulosraportteja, keskuspankkipaatoksia, "
+                        f"tai muita tapahtumia jotka vaikuttavat salkkuun?\n\n"
+                        f"3. SALKUN ARVIO: Onko salkku hyvin hajautettu? Puuttuuko jotain? "
+                        f"Onko jokin positio ylipainotettu?\n\n"
+                        f"4. VIIKON STRATEGIA: Anna 2-3 konkreettista ehdotusta talle viikolle:\n"
+                        f"   - Kannattaako ostaa jotain? Mita ja miksi?\n"
+                        f"   - Kannattaako myyda jotain? Mita ja miksi?\n"
+                        f"   - Kannattaako odottaa? Mika olisi hyvä ostohetki?\n\n"
+                        f"5. TUTKAILTAVAT: Nimeä 1-2 osaketta/ETF:aa/rahastoa joita kannattaa tutkia tarkemmin.\n\n"
+                        f"Kayta emojia selkeyden vuoksi. Vastaa suomeksi. "
+                        f"Muistuta lopussa lyhyesti etta kyseessa on yleinen analyysi eika virallinen sijoitusneuvonta."
+                    )
+                }],
+            },
+            timeout=60,
+        )
+        data = res.json()
+        return "".join(b.get("text", "") for b in data.get("content", []))
+    except Exception as e:
+        print(f"Viikkoanalyysi-virhe: {e}")
         return None
 
 # --- PAAOHJELMA ---
@@ -288,22 +341,37 @@ def main():
 
     laheta_viesti(viesti)
 
-    # --- MARKKINAVAHTI ---
+    # --- MARKKINAVAHTI (aktiiviset vinkit) ---
     print("\nMarkkinavahti tarkistaa...")
     vahti_vastaus = markkinavahti(salkku_teksti, markkinat_teksti)
-    if vahti_vastaus and "HALYTYS" in vahti_vastaus.upper().split("\n")[0]:
-        # Poista ensimmäinen rivi (HALYTYS) ja lähetä loput
+    if vahti_vastaus and "VINKKI" in vahti_vastaus.upper().split("\n")[0]:
         rivit = vahti_vastaus.strip().split("\n")
-        halytys_teksti = "\n".join(rivit[1:]).strip() if len(rivit) > 1 else vahti_vastaus
+        vinkki_teksti = "\n".join(rivit[1:]).strip() if len(rivit) > 1 else vahti_vastaus
         vahti_viesti = (
-            f"🚨 <b>MARKKINAVAHTI — HUOMIO!</b>\n\n"
-            f"{halytys_teksti}\n\n"
+            f"💡 <b>SIJOITUSVINKKI</b>\n\n"
+            f"{vinkki_teksti}\n\n"
             f"<i>⚠️ Yleista analyysia, ei sijoitusneuvontaa.</i>"
         )
         laheta_viesti(vahti_viesti)
-        print("Markkinavahti: HALYTYS lahetetty!")
+        print("Markkinavahti: VINKKI lahetetty!")
     else:
-        print("Markkinavahti: ei halytettavaa.")
+        print("Markkinavahti: ei vinkkeja tanaan.")
+
+    # --- VIIKKOANALYYSI (maanantaisin) ---
+    import sys
+    if "--viikko" in sys.argv or datetime.now().weekday() == 0:
+        # Ajetaan maanantaisin TAI kun --viikko parametri annettu
+        print("\nViikkoanalyysi...")
+        viikko = viikkoanalyysi(salkku_teksti, markkinat_teksti)
+        if viikko:
+            viikko_viesti = (
+                f"📊 <b>VIIKKOANALYYSI</b> — viikko {datetime.now().strftime('%V/%Y')}\n\n"
+                f"{viikko}"
+            )
+            laheta_viesti(viikko_viesti)
+            print("Viikkoanalyysi lahetetty!")
+    else:
+        print("Ei maanantai, ohitetaan viikkoanalyysi.")
 
     print("\nValmis!")
 
