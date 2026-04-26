@@ -60,7 +60,7 @@ async function fetchMarketNews(apiKey, workerUrl) {
   if (!apiKey || !workerUrl) return [];
   try {
     const res = await fetch(workerUrl, { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify({ model: "claude-sonnet-4-6-latest", max_tokens: 800, tools: [{ type: "web_search_20250305", name: "web_search" }],
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 800, tools: [{ type: "web_search_20250305", name: "web_search" }],
         messages: [{ role: "user", content: `Hae tänään (${new Date().toLocaleDateString("fi-FI")}) tärkeimmät globaalit talousuutiset. Listaa 6-8 tapahtumaa lyhyinä lauseina (max 15 sanaa). Vastaa VAIN JSON: {"news":["uutinen1","uutinen2",...]}` }] }) });
     const data = await res.json(); const text = data.content?.map(b => b.text||"").join("") || ""; const clean = text.replace(/```json|```/g,"").trim(); return JSON.parse(clean).news || [];
   } catch { return []; }
@@ -149,7 +149,7 @@ function App() {
       const workerUrl = cfUrl || lsGet("sijoitus_cfurl","");
       if (!workerUrl) { setMessages([...hist,{role:"assistant",content:"⚠️ Syötä Cloudflare Worker -osoite Asetuksiin ensin!"}]); setLoading(false); return; }
       const res = await fetch(workerUrl,{ method:"POST", headers:{"Content-Type":"application/json","x-api-key":antKey || lsGet("sijoitus_antkey","")},
-        body: JSON.stringify({ model:"claude-sonnet-4-6-latest", max_tokens:1000, system: buildSystemPrompt(stocks,portfolio,news,nordnet,rates), messages: hist }) });
+        body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:1000, system: buildSystemPrompt(stocks,portfolio,news,nordnet,rates), messages: hist }) });
       const data = await res.json(); const reply = data.content?.map(b=>b.text||"").join("")||"Virhe.";
       setMessages([...hist,{role:"assistant",content:reply}]);
     } catch { setMessages([...hist,{role:"assistant",content:"⚠️ Yhteysvirhe. Tarkista asetukset."}]); }
