@@ -15,7 +15,7 @@ TELEGRAM_CHAT_ID = "8780106046"
 
 # Omat omistukset (ticker, nimi, kappaleet, hankintahinta euroissa)
 OMAT_OMISTUKSET = [
-    {"symbol": "LUG.ST",   "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
+    {"symbol": "LUG.TO",   "name": "Lundin Gold",          "kpl": 27, "hinta_eur": 58.87},
     {"symbol": "LYSX.DE",  "name": "Amundi Euro Stoxx 50",  "kpl": 1,  "hinta_eur": 58.05},
     {"symbol": "MEKKO.HE", "name": "Marimekko",             "kpl": 1,  "hinta_eur": 11.40},
     {"symbol": "FIA1S.HE", "name": "Finnair",               "kpl": 4,  "hinta_eur": 3.00},
@@ -48,41 +48,6 @@ def laheta_viesti(teksti):
     except Exception as e:
         print(f"VIRHE: {e}")
 
-# --- VALUUTTAKURSSIT ---
-def hae_valuuttakurssit():
-    """Hae EUR/USD ja SEK/EUR kurssit Yahoo Financesta."""
-    kurssit = {"USD": 1.0, "EUR": 1.0, "SEK": 1.0, "CAD": 1.0, "GBP": 1.0}
-    parit = [
-        ("EURUSD=X", "USD"),   # 1 USD = X EUR
-        ("SEKEUR=X", "SEK"),   # 1 SEK = X EUR
-        ("CADEUR=X", "CAD"),   # 1 CAD = X EUR
-        ("GBPEUR=X", "GBP"),   # 1 GBP = X EUR
-    ]
-    for symboli, valuutta in parit:
-        try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symboli}?interval=1d&range=1d"
-            headers = {"User-Agent": "Mozilla/5.0"}
-            r = requests.get(url, timeout=10, headers=headers)
-            parsed = r.json()
-            meta = parsed.get("chart", {}).get("result", [{}])[0].get("meta", {})
-            price = meta.get("regularMarketPrice")
-            if price:
-                kurssit[valuutta] = round(float(price), 6)
-                print(f"  Valuutta 1 {valuutta} = {kurssit[valuutta]} EUR")
-        except Exception as e:
-            print(f"  Valuuttavirhe {symboli}: {e}")
-        time.sleep(0.5)
-    return kurssit
-
-def muunna_euroiksi(hinta, valuutta, kurssit):
-    """Muunna hinta euroiksi."""
-    if valuutta == "EUR":
-        return hinta
-    kerroin = kurssit.get(valuutta)
-    if kerroin and kerroin != 1.0:
-        return hinta * kerroin
-    return hinta  # fallback: palauta sellaisenaan
-
 # --- KURSSIHAKU (Yahoo Finance - toimii kaikille pörsseille) ---
 def hae_kurssi(symbol):
     try:
@@ -96,11 +61,9 @@ def hae_kurssi(symbol):
             return None
         prev = meta.get("chartPreviousClose") or meta.get("previousClose") or price
         muutos = ((price - prev) / prev * 100) if prev else 0
-        valuutta = meta.get("currency", "USD")
         return {
             "hinta":  round(float(price), 2),
             "muutos": round(float(muutos), 2),
-            "valuutta": valuutta,
         }
     except Exception as e:
         print(f"Virhe haussa {symbol}: {e}")
@@ -146,104 +109,6 @@ def hae_analyysi(salkku_teksti, markkinat_teksti):
         print(f"Analyysivirhe: {e}")
         return ""
 
-# --- MARKKINAVAHTI (aktiiviset osto/myyntivinkit) ---
-def markkinavahti(salkku_teksti, markkinat_teksti):
-    """Claude analysoi web-haulla ja antaa konkreettisia osto/myyntivinkkeja."""
-    if not ANTHROPIC_API_KEY:
-        return None
-    try:
-        res = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-            },
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 800,
-                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-                "messages": [{
-                    "role": "user",
-                    "content": (
-                        f"Olet aktiivinen sijoitusvahti suomalaiselle piensijoittajalle (Nordnet, Taso 3 hinnoittelu). "
-                        f"Hae tanaan ({datetime.now().strftime('%d.%m.%Y')}) tuoreimmat talousuutiset web-haulla.\n\n"
-                        f"KAYTTAJAN SALKKU:\n{salkku_teksti}\n\n"
-                        f"MARKKINATILANNE:\n{markkinat_teksti}\n\n"
-                        f"Tehtavasi:\n"
-                        f"1. Arvioi onko tanaan konkreettinen syy OSTAA, MYYDA tai PITAA jotain salkun osaketta\n"
-                        f"2. Etsi web-haulla onko olemassa kiinnostava osake/ETF/rahasto jota kannattaisi harkita\n"
-                        f"3. Huomioi Nordnet Taso 3 kulut (0.15% / min 7EUR) - pieni kauppa ei kannata\n\n"
-                        f"Vastaa TASMALLISESTI nain:\n"
-                        f"1. rivi: VINKKI tai EI_VINKKIA (vain toinen naista)\n"
-                        f"2. rivi eteenpain: Jos VINKKI, anna 1-2 konkreettista ehdotusta.\n"
-                        f"Kayta emojia: 🟢 osta, 🔴 myy, 🟡 pidä silmällä, 💎 pidä\n\n"
-                        f"Anna VINKKI aina kun on jotain mainitsemisen arvoista - ei tarvitse olla kriisi. "
-                        f"Esim. osake dipannut ilman syyta, sektori nousussa, uusi kiinnostava ETF, "
-                        f"kullan hinta liikkunut, tai salkun osakkeen tulosraportti tulossa.\n"
-                        f"Anna EI_VINKKIA vain jos paiva on taysin tapahtumakoyhä."
-                    )
-                }],
-            },
-            timeout=45,
-        )
-        data = res.json()
-        vastaus = "".join(b.get("text", "") for b in data.get("content", []))
-        return vastaus
-    except Exception as e:
-        print(f"Markkinavahti-virhe: {e}")
-        return None
-
-# --- VIIKKOANALYYSI (syvempi maanantaianalyysi) ---
-def viikkoanalyysi(salkku_teksti, markkinat_teksti):
-    """Laajempi viikkostrategia joka maanantai."""
-    if not ANTHROPIC_API_KEY:
-        return None
-    try:
-        res = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-            },
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1500,
-                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-                "messages": [{
-                    "role": "user",
-                    "content": (
-                        f"Olet huippuluokan sijoitusstrategi. Tanaan on maanantai {datetime.now().strftime('%d.%m.%Y')}. "
-                        f"Tee kattava VIIKKOANALYYSI suomalaiselle piensijoittajalle.\n\n"
-                        f"KAYTTAJAN SALKKU:\n{salkku_teksti}\n\n"
-                        f"MARKKINATILANNE:\n{markkinat_teksti}\n\n"
-                        f"Kayttaja sijoittaa Nordnetin kautta (Taso 3: 0.15% / min 7EUR). "
-                        f"Salkku on pieni (~1500-3000EUR) joten kulut vaikuttavat paljon.\n\n"
-                        f"HAE WEB-HAULLA ja analysoi:\n\n"
-                        f"1. VIIME VIIKON YHTEENVETO: Mita tapahtui markkinoilla? Miten salkun osakkeet paerjasivat?\n\n"
-                        f"2. TAMAN VIIKON NAKYMAT: Onko tulossa tulosraportteja, keskuspankkipaatoksia, "
-                        f"tai muita tapahtumia jotka vaikuttavat salkkuun?\n\n"
-                        f"3. SALKUN ARVIO: Onko salkku hyvin hajautettu? Puuttuuko jotain? "
-                        f"Onko jokin positio ylipainotettu?\n\n"
-                        f"4. VIIKON STRATEGIA: Anna 2-3 konkreettista ehdotusta talle viikolle:\n"
-                        f"   - Kannattaako ostaa jotain? Mita ja miksi?\n"
-                        f"   - Kannattaako myyda jotain? Mita ja miksi?\n"
-                        f"   - Kannattaako odottaa? Mika olisi hyvä ostohetki?\n\n"
-                        f"5. TUTKAILTAVAT: Nimeä 1-2 osaketta/ETF:aa/rahastoa joita kannattaa tutkia tarkemmin.\n\n"
-                        f"Kayta emojia selkeyden vuoksi. Vastaa suomeksi. "
-                        f"Muistuta lopussa lyhyesti etta kyseessa on yleinen analyysi eika virallinen sijoitusneuvonta."
-                    )
-                }],
-            },
-            timeout=60,
-        )
-        data = res.json()
-        return "".join(b.get("text", "") for b in data.get("content", []))
-    except Exception as e:
-        print(f"Viikkoanalyysi-virhe: {e}")
-        return None
-
 # --- PAAOHJELMA ---
 def main():
     # Tarkista että Telegram-token on asetettu
@@ -253,10 +118,6 @@ def main():
 
     nyt = datetime.now().strftime("%d.%m.%Y %H:%M")
     print(f"Tarkistetaan markkinat... {nyt}")
-
-    # Hae valuuttakurssit ensin
-    print("\nValuuttakurssit:")
-    kurssit = hae_valuuttakurssit()
 
     # Hae omat omistukset
     salkku_rivit = []
@@ -271,21 +132,18 @@ def main():
         sijoitettu_yhteensa += sijoitettu
 
         if data:
-            # Muunna kurssi euroiksi
-            hinta_eur = muunna_euroiksi(data["hinta"], data["valuutta"], kurssit)
-            nykyarvo = hinta_eur * o["kpl"]
+            nykyarvo = data["hinta"] * o["kpl"]
             arvo_yhteensa += nykyarvo
             tuotto_eur = nykyarvo - sijoitettu
             tuotto_pct = (tuotto_eur / sijoitettu) * 100
             muutos = data["muutos"]
 
-            valuutta_info = f" ({data['valuutta']}→EUR)" if data["valuutta"] != "EUR" else ""
-            print(f"  {o['symbol']}: {data['hinta']:.2f} {data['valuutta']} = {hinta_eur:.2f}EUR ({muutos:+.2f}%)")
+            print(f"  {o['symbol']}: {data['hinta']:.2f}EUR ({muutos:+.2f}%)")
 
             salkku_rivit.append(
                 f"  {o['name']} ({o['symbol']}): {o['kpl']}kpl | "
                 f"Hankinta: {o['hinta_eur']:.2f}EUR | "
-                f"Nyt: {hinta_eur:.2f}EUR{valuutta_info} | "
+                f"Nyt: {data['hinta']:.2f}EUR | "
                 f"Tuotto: {tuotto_eur:+.2f}EUR ({tuotto_pct:+.1f}%)"
             )
 
@@ -340,40 +198,8 @@ def main():
         viesti += f"<b>AI-analyysi:</b>\n{analyysi}"
 
     laheta_viesti(viesti)
-
-    # --- MARKKINAVAHTI (aktiiviset vinkit) ---
-    print("\nMarkkinavahti tarkistaa...")
-    vahti_vastaus = markkinavahti(salkku_teksti, markkinat_teksti)
-    if vahti_vastaus and "VINKKI" in vahti_vastaus.upper().split("\n")[0]:
-        rivit = vahti_vastaus.strip().split("\n")
-        vinkki_teksti = "\n".join(rivit[1:]).strip() if len(rivit) > 1 else vahti_vastaus
-        vahti_viesti = (
-            f"💡 <b>SIJOITUSVINKKI</b>\n\n"
-            f"{vinkki_teksti}\n\n"
-            f"<i>⚠️ Yleista analyysia, ei sijoitusneuvontaa.</i>"
-        )
-        laheta_viesti(vahti_viesti)
-        print("Markkinavahti: VINKKI lahetetty!")
-    else:
-        print("Markkinavahti: ei vinkkeja tanaan.")
-
-    # --- VIIKKOANALYYSI (maanantaisin) ---
-    import sys
-    if "--viikko" in sys.argv or datetime.now().weekday() == 0:
-        # Ajetaan maanantaisin TAI kun --viikko parametri annettu
-        print("\nViikkoanalyysi...")
-        viikko = viikkoanalyysi(salkku_teksti, markkinat_teksti)
-        if viikko:
-            viikko_viesti = (
-                f"📊 <b>VIIKKOANALYYSI</b> — viikko {datetime.now().strftime('%V/%Y')}\n\n"
-                f"{viikko}"
-            )
-            laheta_viesti(viikko_viesti)
-            print("Viikkoanalyysi lahetetty!")
-    else:
-        print("Ei maanantai, ohitetaan viikkoanalyysi.")
-
     print("\nValmis!")
 
 if __name__ == "__main__":
     main()
+    
